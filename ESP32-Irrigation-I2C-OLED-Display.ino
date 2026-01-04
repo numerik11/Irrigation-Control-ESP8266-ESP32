@@ -77,6 +77,7 @@ int  rainSensorPin     = 27;
 int manualSelectPin = -1;   // cycles the target zone (INPUT_PULLUP, -1 = disabled)
 int manualStartPin  = -1;   // toggles start/stop for the selected zone (INPUT_PULLUP, -1 = disabled)
 uint8_t manualSelectedZone = 0;
+uint32_t manualScreenUntilMs = 0;
 const unsigned long MANUAL_BTN_DEBOUNCE_MS = 60;
 
 // ---------- Config / State ----------
@@ -124,6 +125,7 @@ bool enableStartTime2[MAX_ZONES] = {false};
 bool days[MAX_ZONES][7] = {{false}};
 bool zoneActive[MAX_ZONES] = {false};
 bool pendingStart[MAX_ZONES] = {false};
+int  windQueuedZone = -1;  // most recent scheduled zone delayed by wind
 
 bool     windActive = false;
 bool     rainActive             = false;
@@ -230,6 +232,7 @@ String sourceModeText();
 void initManualButtons();
 void tickManualButtons();
 void showManualSelection();
+void drawManualSelection();
 
 
 // ===================== Timezone config =====================
@@ -898,10 +901,12 @@ void loop() {
     delay(15); return;
   }
 
+  bool delayActive = false;
   if (rainActive || windActive) {
+    delayActive = true;
     for (int z=0; z<(int)zonesCount; ++z) if (zoneActive[z]) turnOffZone(z);
     if (now - lastScreenRefresh >= 1000) { lastScreenRefresh = now; RainScreen(); }
-    delay(15); return;
+    delay(15);
   }
 
   if (now - lastTimeQuery >= TIME_QUERY_MS) {
@@ -931,10 +936,10 @@ void loop() {
     if (!isBlockedNow()) {
       for (int z=0; z<(int)zonesCount; z++) {
         if (shouldStartZone(z)) {
-          // NEW: cancel (don't queue) when blocked or delayed by rain/wind
+          // Cancel when blocked/rain; queue during wind so it can run later.
           if (isBlockedNow()) { cancelStart(z, "BLOCKED", false); continue; }
           if (rainActive)     { cancelStart(z, "RAIN",    true ); continue; }
-          if (windActive)     { cancelStart(z, "WIND",    false); continue; }
+          if (windActive)     { windQueuedZone = z; logEvent(z,"QUEUED","WIND",false); continue; }
 
           if (!runZonesConcurrent) {
             // sequential: only start if nothing is running; else queue (still allowed)
@@ -948,17 +953,45 @@ void loop() {
         if (zoneActive[z] && hasDurationCompleted(z)) turnOffZone(z);
       }
 
+      // Wind-delayed: start only the most recent scheduled zone when clear
+      if (!rainActive && !windActive && windQueuedZone >= 0) {
+        int wz = windQueuedZone;
+        windQueuedZone = -1;
+        if (!runZonesConcurrent && anyActive) {
+          pendingStart[wz] = true;
+          logEvent(wz, "QUEUED", "ACTIVE RUN", false);
+        } else {
+          turnOnZone(wz);
+          anyActive = true;
+        }
+      }
+
       if (!runZonesConcurrent) {
         // sequential: drain one queued zone if nothing currently running
-        if (!anyActive) {
+        if (!anyActive && !rainActive && !windActive) {
           for (int z=0; z<(int)zonesCount; z++) if (pendingStart[z]) { pendingStart[z]=false; turnOnZone(z); break; }
+        }
+      } else if (!rainActive && !windActive) {
+        // concurrent: start any queued zones once delays clear
+        for (int z=0; z<(int)zonesCount; z++) {
+          if (pendingStart[z]) { pendingStart[z]=false; turnOnZone(z); anyActive = true; }
         }
       }
       // concurrent: queued starts (due to delays/blocks) will fire when delays clear
     }
   }
 
-  if (now - lastScreenRefresh >= 1000) { lastScreenRefresh = now; HomeScreen(); }
+  if (now - lastScreenRefresh >= 1000) {
+    lastScreenRefresh = now;
+    if (delayActive) {
+      RainScreen();
+    } else if (manualScreenUntilMs != 0 && (int32_t)(manualScreenUntilMs - now) > 0) {
+      drawManualSelection();
+    } else {
+      manualScreenUntilMs = 0;
+      HomeScreen();
+    }
+  }
   delay(LOOP_SLEEP_MS);
 }
 
@@ -1004,6 +1037,11 @@ void initGpioFallback() {
 
 // ---------- Manual hardware buttons (select + start/stop) ----------
 void showManualSelection() {
+  manualScreenUntilMs = millis() + 15000UL;
+  drawManualSelection();
+}
+
+void drawManualSelection() {
   display.clearDisplay();
   display.setTextSize(2);
   display.setCursor(0, 0);
@@ -1921,6 +1959,11 @@ void handleRoot() {
   html += F(".btn{background:var(--primary);color:#fff;border:none;border-radius:12px;padding:8px 12px;font-weight:800;cursor:pointer;");
   html += F("box-shadow:0 8px 20px rgba(0,0,0,.25);font-size:.87rem}");
   html += F(".btn:disabled{background:#7f8aa1;cursor:not-allowed;box-shadow:none}.btn-danger{background:var(--bad)}");
+  html += F(".btn,.btn-ghost,.pill{transition:transform .06s ease,box-shadow .06s ease,filter .06s ease}");
+  html += F(".btn:active:not(:disabled),.btn-ghost:active,.pill:active{transform:translateY(1px);box-shadow:inset 0 2px 6px rgba(0,0,0,.25)}");
+  html += F(".btn,.btn-ghost,.pill{position:relative;overflow:hidden}");
+  html += F(".ripple{position:absolute;border-radius:999px;transform:scale(0);background:rgba(255,255,255,.35);animation:ripple .5s ease-out;pointer-events:none}");
+  html += F("@keyframes ripple{to{transform:scale(3.2);opacity:0;}}");
   html += F(".zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;justify-content:center;justify-items:stretch}");
   html += F(".zone-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 10px 12px;");
   html += F("display:flex;flex-direction:column;gap:6px;min-height:120px}");
@@ -2241,6 +2284,13 @@ html += F("</b></a></div>");
   html += F("return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},body});}");
   html += F("async function postForm(url, body){const opts={method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'}};");
   html += F("if(body)opts.body=body; return fetch(url,opts);} ");
+  html += F("function addRipple(e){const t=e.currentTarget; if(t.disabled) return; const rect=t.getBoundingClientRect();");
+  html += F("const size=Math.max(rect.width,rect.height); const x=(e.clientX|| (rect.left+rect.width/2)) - rect.left - size/2;");
+  html += F("const y=(e.clientY|| (rect.top+rect.height/2)) - rect.top - size/2;");
+  html += F("const r=document.createElement('span'); r.className='ripple'; r.style.width=size+'px'; r.style.height=size+'px';");
+  html += F("r.style.left=x+'px'; r.style.top=y+'px'; const old=t.querySelector('.ripple'); if(old) old.remove(); t.appendChild(r);");
+  html += F("setTimeout(()=>{r.remove();},520);}");
+  html += F("document.querySelectorAll('.btn,.btn-ghost,.pill').forEach(el=>{el.addEventListener('pointerdown',addRipple);});");
   html += F("async function toggleZone(z,on){if(_busy)return;_busy=true;try{await postJson('/valve/'+(on?'on/':'off/')+z,{t:Date.now()});setTimeout(refreshStatus,200);}catch(e){console.error(e);}finally{_busy=false;}}");
 
   html += F("const btnBack=document.getElementById('toggle-backlight-btn');");
@@ -2368,6 +2418,11 @@ void handleSetupPage() {
   html += F(".row{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}.row small{color:#aab8d0;font-size:.8rem}");
   html += F(".btn{background:#1976d2;color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer;box-shadow:0 6px 16px rgba(25,118,210,.25);font-size:.9rem}");
   html += F(".btn-alt{background:#263244;color:#e8eef6;border:none;border-radius:10px;padding:8px 12px;font-size:.9rem}");
+  html += F(".btn,.btn-alt{transition:transform .06s ease,box-shadow .06s ease,filter .06s ease}");
+  html += F(".btn:active,.btn-alt:active{transform:translateY(1px);box-shadow:inset 0 2px 6px rgba(0,0,0,.25)}");
+  html += F(".btn,.btn-alt{position:relative;overflow:hidden}");
+  html += F(".ripple{position:absolute;border-radius:999px;transform:scale(0);background:rgba(255,255,255,.35);animation:ripple .5s ease-out;pointer-events:none}");
+  html += F("@keyframes ripple{to{transform:scale(3.2);opacity:0;}}");
   html += F(".grid{display:grid;grid-template-columns:1fr;gap:10px}");
   html += F(".cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px}");
   html += F("@media(max-width:760px){.cols2{grid-template-columns:1fr}label{min-width:130px}}");
@@ -2616,6 +2671,13 @@ void handleSetupPage() {
   html += F("<script>");
   html += F("async function post(path, body){try{await fetch(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});}catch(e){console.error(e)}}");
   html += F("const g=id=>document.getElementById(id);");
+  html += F("function addRipple(e){const t=e.currentTarget; if(t.disabled) return; const rect=t.getBoundingClientRect();");
+  html += F("const size=Math.max(rect.width,rect.height); const x=(e.clientX|| (rect.left+rect.width/2)) - rect.left - size/2;");
+  html += F("const y=(e.clientY|| (rect.top+rect.height/2)) - rect.top - size/2;");
+  html += F("const r=document.createElement('span'); r.className='ripple'; r.style.width=size+'px'; r.style.height=size+'px';");
+  html += F("r.style.left=x+'px'; r.style.top=y+'px'; const old=t.querySelector('.ripple'); if(old) old.remove(); t.appendChild(r);");
+  html += F("setTimeout(()=>{r.remove();},520);}");
+  html += F("document.querySelectorAll('.btn,.btn-alt').forEach(el=>{el.addEventListener('pointerdown',addRipple);});");
   html += F("g('btn-toggle-backlight')?.addEventListener('click',()=>post('/toggleBacklight','x=1'));");
   html += F("g('btn-pause-24')?.addEventListener('click',()=>post('/pause','sec=86400'));");
   html += F("g('btn-pause-7d')?.addEventListener('click',()=>post('/pause','sec='+(7*86400)));");
@@ -2767,6 +2829,11 @@ void handleLogPage() {
   html += F(".wrap{max-width:980px;margin:16px auto;padding:0 10px}");
   html += F(".toolbar{margin:8px 0;display:flex;flex-wrap:wrap;gap:8px}");
   html += F(".btn{padding:8px 12px;background:#1e2d4c;border-radius:10px;text-decoration:none;color:#fff;font-size:.9rem;border:none;cursor:pointer;display:inline-block}");
+  html += F(".btn{transition:transform .06s ease,box-shadow .06s ease,filter .06s ease}");
+  html += F(".btn:active{transform:translateY(1px);box-shadow:inset 0 2px 6px rgba(0,0,0,.25)}");
+  html += F(".btn{position:relative;overflow:hidden}");
+  html += F(".ripple{position:absolute;border-radius:999px;transform:scale(0);background:rgba(255,255,255,.35);animation:ripple .5s ease-out;pointer-events:none}");
+  html += F("@keyframes ripple{to{transform:scale(3.2);opacity:0;}}");
   html += F(".btn-danger{background:#b93b3b}.btn-warn{background:#a15517}");
   html += F(".table-wrap{margin-top:8px;overflow-x:auto;border-radius:12px;border:1px solid #22314f}");
   html += F("table{width:100%;border-collapse:collapse;background:#0b1220;min-width:720px}");
@@ -2822,7 +2889,16 @@ void handleLogPage() {
   }
   f.close();
 
-  html += F("</table></div></div></body></html>");
+  html += F("</table></div></div>");
+  html += F("<script>");
+  html += F("function addRipple(e){const t=e.currentTarget; if(t.disabled) return; const rect=t.getBoundingClientRect();");
+  html += F("const size=Math.max(rect.width,rect.height); const x=(e.clientX|| (rect.left+rect.width/2)) - rect.left - size/2;");
+  html += F("const y=(e.clientY|| (rect.top+rect.height/2)) - rect.top - size/2;");
+  html += F("const r=document.createElement('span'); r.className='ripple'; r.style.width=size+'px'; r.style.height=size+'px';");
+  html += F("r.style.left=x+'px'; r.style.top=y+'px'; const old=t.querySelector('.ripple'); if(old) old.remove(); t.appendChild(r);");
+  html += F("setTimeout(()=>{r.remove();},520);}");
+  html += F("document.querySelectorAll('.btn').forEach(el=>{el.addEventListener('pointerdown',addRipple);});");
+  html += F("</script></body></html>");
   server.send(200,"text/html",html);
 }
 
@@ -2838,6 +2914,11 @@ void handleTankCalibration() {
   html += F("<style>body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#0f1522;color:#e8eef6;margin:0}");
   html += F(".wrap{max-width:520px;margin:30px auto;padding:0 12px}.card{background:#0b1220;border:1px solid #22314f;border-radius:14px;padding:18px 14px}");
   html += F(".btn{background:#1976d2;color:#fff;border:none;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}.row{display:flex;gap:10px;justify-content:space-between;margin-top:10px}");
+  html += F(".btn{transition:transform .06s ease,box-shadow .06s ease,filter .06s ease}");
+  html += F(".btn:active{transform:translateY(1px);box-shadow:inset 0 2px 6px rgba(0,0,0,.25)}");
+  html += F(".btn{position:relative;overflow:hidden}");
+  html += F(".ripple{position:absolute;border-radius:999px;transform:scale(0);background:rgba(255,255,255,.35);animation:ripple .5s ease-out;pointer-events:none}");
+  html += F("@keyframes ripple{to{transform:scale(3.2);opacity:0;}}");
   html += F("a{color:#a9cbff}</style></head><body><div class='wrap'><h2>🚰 Tank Calibration</h2><div class='card'>");
 
   html += F("<p>Raw: <b>"); html += String(raw); html += F("</b></p>");
@@ -2846,7 +2927,16 @@ void handleTankCalibration() {
   html += F("<div class='row'><form method='POST' action='/setTankEmpty'><button class='btn' type='submit'>Set Empty</button></form>");
   html += F("<form method='POST' action='/setTankFull'><button class='btn' type='submit'>Set Full</button></form></div>");
   html += F("<p><a href='/'>Home</a> · <a href='/setup'>Setup</a></p></div></div>");
-  html += F("<script>setTimeout(()=>location.reload(),2000);</script></body></html>");
+  html += F("<script>");
+  html += F("function addRipple(e){const t=e.currentTarget; if(t.disabled) return; const rect=t.getBoundingClientRect();");
+  html += F("const size=Math.max(rect.width,rect.height); const x=(e.clientX|| (rect.left+rect.width/2)) - rect.left - size/2;");
+  html += F("const y=(e.clientY|| (rect.top+rect.height/2)) - rect.top - size/2;");
+  html += F("const r=document.createElement('span'); r.className='ripple'; r.style.width=size+'px'; r.style.height=size+'px';");
+  html += F("r.style.left=x+'px'; r.style.top=y+'px'; const old=t.querySelector('.ripple'); if(old) old.remove(); t.appendChild(r);");
+  html += F("setTimeout(()=>{r.remove();},520);}");
+  html += F("document.querySelectorAll('.btn').forEach(el=>{el.addEventListener('pointerdown',addRipple);});");
+  html += F("setTimeout(()=>location.reload(),2000);");
+  html += F("</script></body></html>");
 
   server.send(200,"text/html",html);
 }
