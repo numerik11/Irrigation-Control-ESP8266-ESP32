@@ -2080,7 +2080,7 @@ html += F("</b></a></div>");
   html += F("<div class='grid' style='grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px'>");
   html += F("<div class='chip'><b>Low</b>&nbsp;<b id='tmin'>---</b> C</div>");
   html += F("<div class='chip'><b>High</b>&nbsp;<b id='tmax'>---</b> C</div>");
-  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b> hPa</div>");
+  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b></div>");
   html += F("<div class='chip'><span class='sub'>Sunrise</span>&nbsp;<b id='sunr'>--:--</b></div>");
   html += F("<div class='chip'><span class='sub'>Sunset</span>&nbsp;<b id='suns'>--:--</b></div>");
   html += F("</div></div>");
@@ -2457,6 +2457,11 @@ void handleSetupPage() {
   html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem}");
   html += F("input[type=text],select{width:100%;max-width:520px}");
   html += F("input[type=number]{width:100%;max-width:200px}");
+  html += F("input[type=text].in-wide,select.in-wide{max-width:600px}");
+  html += F("input[type=text].in-med,select.in-med{max-width:440px}");
+  html += F("input[type=number].in-xs{max-width:120px}");
+  html += F("input[type=number].in-sm{max-width:160px}");
+  html += F("input[type=number].in-md{max-width:240px}");
   html += F(".row{display:flex;align-items:center;gap:12px;margin:10px 0;flex-wrap:wrap}.row small{color:#9fb0ca;font-size:.85rem}");
   html += F(".btn{background:linear-gradient(180deg,#1c74d9,#165fba);color:#fff;border:1px solid rgba(0,0,0,.18);border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(25,118,210,.25);font-size:.95rem}");
   html += F(".btn-alt{background:#1b2537;color:#e8eef6;border:1px solid #2a3954;border-radius:12px;padding:10px 14px;font-size:.95rem}");
@@ -2467,7 +2472,7 @@ void handleSetupPage() {
   html += F("@keyframes ripple{to{transform:scale(3.2);opacity:0;}}");
   html += F(".grid{display:grid;grid-template-columns:1fr;gap:14px}");
   html += F(".cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px}");
-  html += F("@media(max-width:760px){.cols2{grid-template-columns:1fr}label{min-width:150px}}");
+  html += F("@media(max-width:760px){.cols2{grid-template-columns:1fr}label{min-width:150px}input[type=text].in-wide,select.in-wide,input[type=text].in-med,select.in-med{max-width:100%}}");
   html += F(".switchline{display:flex;gap:12px;align-items:center;flex-wrap:wrap}");
   html += F(".subhead{opacity:.85;margin:8px 0 6px 0;font-weight:700;font-size:.98rem}");
   html += F(".hr{height:1px;background:#1f2a44;margin:10px 0 8px 0;border:none}");
@@ -2503,8 +2508,8 @@ void handleSetupPage() {
 
   // Weather
   html += F("<div class='card'><h3>Weather</h3>");
-  html += F("<div class='row'><label>API Key</label><input type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
-  html += F("<div class='row'><label>City ID</label><input type='text' name='city' value='"); html += city; html += F("'><small>OpenWeatherMap city id</small></div>");
+  html += F("<div class='row'><label>API Key</label><input class='in-wide' type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
+  html += F("<div class='row'><label>City ID</label><input class='in-med' type='text' name='city' value='"); html += city; html += F("'><small>OpenWeatherMap city id</small></div>");
   html += F("</div>");
 
   // Zones
@@ -2524,7 +2529,7 @@ void handleSetupPage() {
   html += F("<div class='row switchline'><label>Disable OWM Rain</label><input type='checkbox' name='rainForecastDisabled' ");
   html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore OpenWeatherMap rain</small></div>");
   html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
-  html += F("<div class='row'><label>Rain Sensor GPIO</label><input type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
+  html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
   html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
   html += F("</div>");
 
@@ -2551,15 +2556,15 @@ void handleSetupPage() {
   // Right column: numeric thresholds / timers
   html += F("<div>");
   html += F("<div class='subhead'>Thresholds & Timers</div><hr class='hr'>");
-  html += F("<div class='row'><label>Wind Threshold (m/s)</label><input type='number' step='0.1' min='0' max='50' name='windSpeedThreshold' value='");
+  html += F("<div class='row'><label>Wind Threshold (m/s)</label><input class='in-sm' type='number' step='0.1' min='0' max='50' name='windSpeedThreshold' value='");
   html += String(windSpeedThreshold,1); html += F("'></div>");
-  html += F("<div class='row'><label>Rain Cooldown (hours)</label><input type='number' min='0' max='720' name='rainCooldownHours' value='");
+  html += F("<div class='row'><label>Rain Cooldown (hours)</label><input class='in-sm' type='number' min='0' max='720' name='rainCooldownHours' value='");
   html += String(rainCooldownMin / 60);
   html += F("'><small>Cooldown period after rain stops</small></div>");
-  html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input type='number' min='0' max='200' name='rainThreshold24h' value='");
+  html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
   html += String(rainThreshold24h_mm);
   html += F("'><small>Delay if >= threshold (24h total)</small></div>");
-  html += F("<div class='row'><label>Pause for (hours)</label><input type='number' min='0' max='720' name='pauseHours' value='");
+  html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
   time_t nowEp = time(nullptr);
   {
     uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
@@ -2591,7 +2596,7 @@ void handleSetupPage() {
   html += F("<small>(4-zone Tank/Mains mode only)</small></div>");
 
   html += F("<div class='row'><label>Tank Low Threshold (%)</label>"
-            "<input type='number' min='0' max='100' name='tankThresh' value='");
+            "<input class='in-xs' type='number' min='0' max='100' name='tankThresh' value='");
   html += String(tankLowThresholdPct);
   html += F("'><small>Switch to mains if tank below this level</small></div>");
 
@@ -2613,13 +2618,13 @@ void handleSetupPage() {
   // GPIO fallback pins
   html += F("<div class='card'><h3>GPIO Fallback (if I2C relays not found)</h3><div class='grid'>");
   for (uint8_t i=0;i<MAX_ZONES;i++){
-    html += F("<div class='row'><label>Zone "); html += String(i+1);
-    html += F(" Pin</label><input type='number' min='0' max='39' name='zonePin"); html += String(i);
+  html += F("<div class='row'><label>Zone "); html += String(i+1);
+  html += F(" Pin</label><input class='in-xs' type='number' min='0' max='39' name='zonePin"); html += String(i);
     html += F("' value='"); html += String(zonePins[i]); html += F("'></div>");
   }
-  html += F("<div class='row'><label>Main Pin</label><input type='number' min='0' max='39' name='mainsPin' value='");
+  html += F("<div class='row'><label>Main Pin</label><input class='in-xs' type='number' min='0' max='39' name='mainsPin' value='");
   html += String(mainsPin); html += F("'><small>4-zone fallback</small></div>");
-  html += F("<div class='row'><label>Tank Pin</label><input type='number' min='0' max='39' name='tankPin' value='");
+  html += F("<div class='row'><label>Tank Pin</label><input class='in-xs' type='number' min='0' max='39' name='tankPin' value='");
   html += String(tankPin); html += F("'><small>4-zone fallback</small></div>");
 
   // NEW: GPIO active polarity
@@ -2633,10 +2638,10 @@ void handleSetupPage() {
 
   // Manual buttons
   html += F("<div class='card'><h3>Manual Buttons</h3>");
-  html += F("<div class='row switchline'><label>Select Button Pin</label><input type='number' min='-1' max='39' name='manualSelectPin' value='");
+  html += F("<div class='row switchline'><label>Select Button Pin</label><input class='in-xs' type='number' min='-1' max='39' name='manualSelectPin' value='");
   html += String(manualSelectPin);
   html += F("'><small>-1 to disable. Uses INPUT_PULLUP; press = LOW.</small></div>");
-  html += F("<div class='row switchline'><label>Start/Stop Button Pin</label><input type='number' min='-1' max='39' name='manualStartPin' value='");
+  html += F("<div class='row switchline'><label>Start/Stop Button Pin</label><input class='in-xs' type='number' min='-1' max='39' name='manualStartPin' value='");
   html += String(manualStartPin);
   html += F("'><small>Toggles the selected zone on/off.</small></div>");
   html += F("<div class='row'><label>Selected Zone</label><div class='sub'>Z");
@@ -2672,7 +2677,7 @@ void handleSetupPage() {
   // POSIX string input
   html += F("<div class='row'>");
   html += F("<label>Timezone</label>");
-  html += F("<input type='text' name='tzPosix' value='");
+  html += F("<input class='in-wide' type='text' name='tzPosix' value='");
   html += tzPosix;
   html += F("' placeholder='ACST-9:30ACDT-10:30,M10.1.0/2,M4.1.0/3'>");
   html += F("</div>");
@@ -2686,14 +2691,14 @@ void handleSetupPage() {
   // IANA input + themed select
   html += F("<div class='row'><label>Select Timezone</label>");
   html += F("<div style='flex:1;display:grid;gap:6px'>");
-  html += F("<input type='text' name='tzIANA' value='");
+  html += F("<input class='in-med' type='text' name='tzIANA' value='");
   html += tzIANA;
   html += F("' placeholder='Australia/Adelaide'>");
-  html += F("<select id='tzIANASelect'><option value=''>Select from list</option></select>");
+  html += F("<select class='in-med' id='tzIANASelect'><option value=''>Select from list</option></select>");
   html += F("</div>");
   html += F("</div>");
 
-  html += F("<div class='row'><label>Fixed Offset (min)</label><input type='number' name='tzFixed' value='");
+  html += F("<div class='row'><label>Fixed Offset (min)</label><input class='in-sm' type='number' name='tzFixed' value='");
   html += String(tzFixedOffsetMin);
   html += F("'><small>Minutes from UTC</small></div>");
   html += F("</div>"); // end Timezone card
@@ -2701,11 +2706,11 @@ void handleSetupPage() {
   // MQTT
   html += F("<div class='card'><h3>MQTT (Home Assistant)</h3>");
   html += F("<div class='row switchline'><label>Enable MQTT</label><input type='checkbox' name='mqttEnabled' "); html += (mqttEnabled ? "checked" : ""); html += F("></div>");
-  html += F("<div class='row'><label>Broker Host</label><input type='text' name='mqttBroker' value='"); html += mqttBroker; html += F("'></div>");
-  html += F("<div class='row'><label>Port</label><input type='number' name='mqttPort' value='"); html += String(mqttPort); html += F("'></div>");
-  html += F("<div class='row'><label>User</label><input type='text' name='mqttUser' value='"); html += mqttUser; html += F("'></div>");
-  html += F("<div class='row'><label>Password</label><input type='text' name='mqttPass' value='"); html += mqttPass; html += F("'></div>");
-  html += F("<div class='row'><label>Base Topic</label><input type='text' name='mqttBase' value='"); html += mqttBase; html += F("'><small>e.g. espirrigation</small></div>");
+  html += F("<div class='row'><label>Broker Host</label><input class='in-wide' type='text' name='mqttBroker' value='"); html += mqttBroker; html += F("'></div>");
+  html += F("<div class='row'><label>Port</label><input class='in-xs' type='number' name='mqttPort' value='"); html += String(mqttPort); html += F("'></div>");
+  html += F("<div class='row'><label>User</label><input class='in-med' type='text' name='mqttUser' value='"); html += mqttUser; html += F("'></div>");
+  html += F("<div class='row'><label>Password</label><input class='in-med' type='text' name='mqttPass' value='"); html += mqttPass; html += F("'></div>");
+  html += F("<div class='row'><label>Base Topic</label><input class='in-med' type='text' name='mqttBase' value='"); html += mqttBase; html += F("'><small>e.g. espirrigation</small></div>");
   html += F("</div>");
 
   html += F("</form>");
