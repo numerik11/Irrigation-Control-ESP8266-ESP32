@@ -178,6 +178,7 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
 <img width="615" height="902" alt="image" src="https://github.com/user-attachments/assets/0199fd7a-4d08-4c7c-afe6-8b436df439be" />
 
 -GPIO/Timezone/MQTT Page
+<img width="851" height="202" alt="image" src="https://github.com/user-attachments/assets/63a707df-82df-4f1c-954a-d3d07144e553" />
 
 <img width="709" height="904" alt="image" src="https://github.com/user-attachments/assets/8630a990-62da-4bb1-95f8-b5ed7bf90363" />
 
