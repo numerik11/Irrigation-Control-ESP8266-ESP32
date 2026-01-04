@@ -6,7 +6,7 @@
   server.on("/whereami", HTTP_GET, handleWhereAmI);
 #endif
 #ifndef ENABLE_OTA
-  #define ENABLE_OTA 1
+  #define ENABLE_OTA 0
 #endif
 #include <Arduino.h>
 #include <ArduinoJson.h>
