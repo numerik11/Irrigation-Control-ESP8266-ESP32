@@ -1,5 +1,4 @@
-//130x230 SPI TFT Pin 32 for brightness control
-//Wind Delay (starts after wind drops below threshold if watering is scheduled).
+//130x230 SPI TFT 
 
 #ifndef ENABLE_DEBUG_ROUTES
   #define ENABLE_DEBUG_ROUTES 0   // set to 1 when you need them
