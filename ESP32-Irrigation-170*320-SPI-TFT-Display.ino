@@ -3123,9 +3123,9 @@ void handleSetupPage() {
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
   html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:800;letter-spacing:.3px;color:#e8eef6}");
-  html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4}");
+  html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4;text-align:left}");
   // Inputs + select share the same theme
-  html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem}");
+  html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem;text-align:left}");
   html += F("input[type=text],select{width:100%;max-width:520px}");
   html += F("input[type=number]{width:100%;max-width:200px}");
   html += F("input[type=text].in-wide,select.in-wide{max-width:600px}");
@@ -3168,7 +3168,7 @@ void handleSetupPage() {
   html += F("body{font-size:16px;}");
   html += F(".wrap{max-width:1160px;padding:0 20px;}");
   html += F(".card{padding:20px 18px;}");
-  html += F(".row{justify-content:space-between;}");
+  html += F(".row{justify-content:flex-start;}");
   html += F("label{min-width:240px;}");
   html += F("input[type=text],select{max-width:560px;}");
   html += F("input[type=number]{max-width:220px;}");
