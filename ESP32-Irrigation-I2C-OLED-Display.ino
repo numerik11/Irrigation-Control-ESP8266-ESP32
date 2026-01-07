@@ -447,6 +447,10 @@ String rainDelayCauseText() {
 }
 
 static const char* kHost = "espirrigation";
+static const IPAddress kStaIp(192, 168, 1, 123);
+static const IPAddress kStaGateway(192, 168, 1, 1);
+static const IPAddress kStaSubnet(255, 255, 255, 0);
+static const IPAddress kStaDns1(192, 168, 1, 1);
 
 static void mdnsStart() {
   MDNS.end(); // in case it was running
@@ -573,6 +577,7 @@ void setup() {
 
   // WiFiManager connect
   wifiManager.setTimeout(180);
+  wifiManager.setSTAStaticIPConfig(kStaIp, kStaGateway, kStaSubnet, kStaDns1);
   if (!wifiManager.autoConnect("ESPIrrigationAP")) {
     ESP.restart();
   }
@@ -1111,18 +1116,23 @@ void tickManualButtons() {
 
 // ---------- Weather / Forecast ----------
 String fetchWeather() {
-  if (apiKey.length()<5 || city.length()<1) return "{}";
+  if (apiKey.length()<5 || city.length()<1) return "";
   HTTPClient http; 
   http.setTimeout(2500); // NEW: shorter timeout
   String url="http://api.openweathermap.org/data/2.5/weather?id="+city+"&appid="+apiKey+"&units=metric";
   http.begin(client,url);
   int code=http.GET();
-  String payload=(code>0)?http.getString():"{}";
-  http.end(); return payload;
+  if (code != 200) {
+    http.end();
+    return "";
+  }
+  String payload = http.getString();
+  http.end();
+  return payload;
 }
 
 String fetchForecast(float lat, float lon) {
-  if (apiKey.length() < 5) return "{}";
+  if (apiKey.length() < 5) return "";
   HTTPClient http; 
   http.setTimeout(3000); // NEW: shorter timeout
 
@@ -1133,7 +1143,11 @@ String fetchForecast(float lat, float lon) {
 
   http.begin(client, url);
   int code = http.GET();
-  String payload = (code > 0) ? http.getString() : "{}";
+  if (code != 200) {
+    http.end();
+    return "";
+  }
+  String payload = http.getString();
   http.end();
   return payload;
 }
@@ -1195,7 +1209,13 @@ void updateCachedWeather() {
   bool needCur = (cachedWeatherData == "" || (nowms - lastWeatherUpdate >= weatherUpdateInterval));
   bool haveCoord = false; float lat = NAN, lon = NAN;
 
-  if (needCur) { cachedWeatherData = fetchWeather(); lastWeatherUpdate = nowms; }
+  if (needCur) {
+    String fresh = fetchWeather();
+    if (fresh.length() > 0) {
+      cachedWeatherData = fresh;
+      lastWeatherUpdate = nowms;
+    }
+  }
 
   // Extract coordinates and 1h rain
   {
@@ -1218,83 +1238,88 @@ void updateCachedWeather() {
         }
       }
       rain1hNow = r1;
+    } else {
+      rain1hNow = 0.0f;
     }
   }
 
   // ---- Forecast fetch / parse ----
   if (haveCoord && (cachedForecastData == "" || (nowms - lastForecastUpdate >= forecastUpdateInterval))) {
-    cachedForecastData = fetchForecast(lat, lon);
-    lastForecastUpdate = nowms;
+    String freshFc = fetchForecast(lat, lon);
+    if (freshFc.length() > 0) {
+      cachedForecastData = freshFc;
+      lastForecastUpdate = nowms;
 
-    rainNext12h_mm = 0; 
-    rainNext24h_mm = 0; 
-    popNext12h_pct = 0; 
-    nextRainIn_h   = -1;
-    maxGust24h_ms  = 0; 
-    todayMin_C     = NAN; 
-    todayMax_C     = NAN; 
-    todaySunrise   = 0;   
-    todaySunset    = 0;
+      rainNext12h_mm = 0; 
+      rainNext24h_mm = 0; 
+      popNext12h_pct = 0; 
+      nextRainIn_h   = -1;
+      maxGust24h_ms  = 0; 
+      todayMin_C     = NAN; 
+      todayMax_C     = NAN; 
+      todaySunrise   = 0;   
+      todaySunset    = 0;
 
-    DynamicJsonDocument fc(14 * 1024);
-    if (deserializeJson(fc, cachedForecastData) == DeserializationError::Ok) {
-      if (fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
-        JsonObject d0 = fc["daily"][0];
-        todayMin_C   = d0["temp"]["min"] | NAN;
-        todayMax_C   = d0["temp"]["max"] | NAN;
-        todaySunrise = (time_t)(d0["sunrise"] | 0);
-        todaySunset  = (time_t)(d0["sunset"]  | 0);
-      }
-      auto read1h = [](JsonVariant v) -> float {
-        if (v.isNull()) return 0.0f;
-        if (v.is<float>() || v.is<double>() || v.is<int>()) return v.as<float>();
-        JsonVariant one = v["1h"];
-        return one.isNull() ? 0.0f : one.as<float>();
-      };
-      if (fc["hourly"].is<JsonArray>()) {
-        JsonArray hr = fc["hourly"].as<JsonArray>();
-        int hrs = hr.size();
-        int L24 = min(24, hrs);
-        int L12 = min(12, hrs);
-        for (int i = 0; i < L24; i++) {
-          JsonObject h = hr[i];
-          float r = 0.0f;
-          r += read1h(h["rain"]);
-          r += read1h(h["snow"]);
-          if (i < L12) {
-            rainNext12h_mm += r;
-            int pop = (int)roundf(100.0f * (h["pop"] | 0.0f));
-            if (pop > popNext12h_pct) popNext12h_pct = pop;
+      DynamicJsonDocument fc(14 * 1024);
+      if (deserializeJson(fc, cachedForecastData) == DeserializationError::Ok) {
+        if (fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
+          JsonObject d0 = fc["daily"][0];
+          todayMin_C   = d0["temp"]["min"] | NAN;
+          todayMax_C   = d0["temp"]["max"] | NAN;
+          todaySunrise = (time_t)(d0["sunrise"] | 0);
+          todaySunset  = (time_t)(d0["sunset"]  | 0);
+        }
+        auto read1h = [](JsonVariant v) -> float {
+          if (v.isNull()) return 0.0f;
+          if (v.is<float>() || v.is<double>() || v.is<int>()) return v.as<float>();
+          JsonVariant one = v["1h"];
+          return one.isNull() ? 0.0f : one.as<float>();
+        };
+        if (fc["hourly"].is<JsonArray>()) {
+          JsonArray hr = fc["hourly"].as<JsonArray>();
+          int hrs = hr.size();
+          int L24 = min(24, hrs);
+          int L12 = min(12, hrs);
+          for (int i = 0; i < L24; i++) {
+            JsonObject h = hr[i];
+            float r = 0.0f;
+            r += read1h(h["rain"]);
+            r += read1h(h["snow"]);
+            if (i < L12) {
+              rainNext12h_mm += r;
+              int pop = (int)roundf(100.0f * (h["pop"] | 0.0f));
+              if (pop > popNext12h_pct) popNext12h_pct = pop;
+            }
+            rainNext24h_mm += r;
+            if (nextRainIn_h < 0) {
+              float popf = h["pop"] | 0.0f;
+              if (r > 0.01f || popf >= 0.5f) nextRainIn_h = i;
+            }
+            float g = h["wind_gust"] | 0.0f;
+            if (g > maxGust24h_ms) maxGust24h_ms = g;
           }
-          rainNext24h_mm += r;
-          if (nextRainIn_h < 0) {
-            float popf = h["pop"] | 0.0f;
-            if (r > 0.01f || popf >= 0.5f) nextRainIn_h = i;
+        }
+        if (rainNext24h_mm <= 0.0f && fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
+          JsonObject d0 = fc["daily"][0];
+          float dailyTotal = 0.0f;
+          if (!d0["rain"].isNull()) {
+            if (d0["rain"].is<float>() || d0["rain"].is<double>() || d0["rain"].is<int>())
+              dailyTotal += d0["rain"].as<float>();
           }
-          float g = h["wind_gust"] | 0.0f;
-          if (g > maxGust24h_ms) maxGust24h_ms = g;
+          if (!d0["snow"].isNull()) {
+            if (d0["snow"].is<float>() || d0["snow"].is<double>() || d0["snow"].is<int>())
+              dailyTotal += d0["snow"].as<float>();
+          }
+          if (dailyTotal > 0.0f) {
+            rainNext24h_mm = dailyTotal;
+            if (rainNext12h_mm <= 0.0f) rainNext12h_mm = dailyTotal * 0.5f;
+          }
         }
       }
-      if (rainNext24h_mm <= 0.0f && fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
-        JsonObject d0 = fc["daily"][0];
-        float dailyTotal = 0.0f;
-        if (!d0["rain"].isNull()) {
-          if (d0["rain"].is<float>() || d0["rain"].is<double>() || d0["rain"].is<int>())
-            dailyTotal += d0["rain"].as<float>();
-        }
-        if (!d0["snow"].isNull()) {
-          if (d0["snow"].is<float>() || d0["snow"].is<double>() || d0["snow"].is<int>())
-            dailyTotal += d0["snow"].as<float>();
-        }
-        if (dailyTotal > 0.0f) {
-          rainNext24h_mm = dailyTotal;
-          if (rainNext12h_mm <= 0.0f) rainNext12h_mm = dailyTotal * 0.5f;
-        }
-      }
+      if (isnan(rainNext12h_mm) || rainNext12h_mm < 0) rainNext12h_mm = 0.0f;
+      if (isnan(rainNext24h_mm) || rainNext24h_mm < 0) rainNext24h_mm = 0.0f;
+      if (isnan(maxGust24h_ms)  || maxGust24h_ms  < 0) maxGust24h_ms  = 0.0f;
     }
-    if (isnan(rainNext12h_mm) || rainNext12h_mm < 0) rainNext12h_mm = 0.0f;
-    if (isnan(rainNext24h_mm) || rainNext24h_mm < 0) rainNext24h_mm = 0.0f;
-    if (isnan(maxGust24h_ms)  || maxGust24h_ms  < 0) maxGust24h_ms  = 0.0f;
   }
 
   // Fallback sunrise/sunset & min/max from current weather
@@ -3417,6 +3442,4 @@ void handleClearEvents() {
   server.sendHeader("Location", "/events", true);
   server.send(302, "text/plain", "");
 }
-
-
 
