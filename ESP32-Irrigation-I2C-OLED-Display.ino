@@ -944,6 +944,8 @@ void loop() {
   if (cachedTm.tm_hour == 0 && cachedTm.tm_min == 0) {
     if (!midnightDone) {
       memset(lastCheckedMinute, -1, sizeof(lastCheckedMinute));
+      todayMin_C = NAN;
+      todayMax_C = NAN;
       midnightDone = true;
     }
   } else midnightDone = false;
@@ -1276,8 +1278,6 @@ void updateCachedWeather() {
       popNext12h_pct = 0; 
       nextRainIn_h   = -1;
       maxGust24h_ms  = 0; 
-      todayMin_C     = NAN; 
-      todayMax_C     = NAN; 
       todaySunrise   = 0;   
       todaySunset    = 0;
 
@@ -1285,8 +1285,6 @@ void updateCachedWeather() {
       if (deserializeJson(fc, cachedForecastData) == DeserializationError::Ok) {
       if (fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
         JsonObject d0 = fc["daily"][0];
-        todayMin_C   = d0["temp"]["min"] | NAN;
-        todayMax_C   = d0["temp"]["max"] | NAN;
         todaySunrise = (time_t)(d0["sunrise"] | 0);
         todaySunset  = (time_t)(d0["sunset"]  | 0);
       }
@@ -1301,18 +1299,11 @@ void updateCachedWeather() {
         int hrs = hr.size();
         int L24 = min(24, hrs);
         int L12 = min(12, hrs);
-        float hourlyMin = NAN;
-        float hourlyMax = NAN;
         for (int i = 0; i < L24; i++) {
           JsonObject h = hr[i];
           float r = 0.0f;
           r += read1h(h["rain"]);
           r += read1h(h["snow"]);
-          float t = h["temp"] | NAN;
-          if (isfinite(t)) {
-            if (!isfinite(hourlyMin) || t < hourlyMin) hourlyMin = t;
-            if (!isfinite(hourlyMax) || t > hourlyMax) hourlyMax = t;
-          }
           if (i < L12) {
             rainNext12h_mm += r;
             int pop = (int)roundf(100.0f * (h["pop"] | 0.0f));
@@ -1326,8 +1317,6 @@ void updateCachedWeather() {
           float g = h["wind_gust"] | 0.0f;
           if (g > maxGust24h_ms) maxGust24h_ms = g;
         }
-        if (!isfinite(todayMin_C) && isfinite(hourlyMin)) todayMin_C = hourlyMin;
-        if (!isfinite(todayMax_C) && isfinite(hourlyMax)) todayMax_C = hourlyMax;
       }
         if (rainNext24h_mm <= 0.0f && fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
           JsonObject d0 = fc["daily"][0];
@@ -1359,8 +1348,11 @@ void updateCachedWeather() {
     time_t ss = (time_t)(cur["sys"]["sunset"]  | 0);
     if (sr > 0) todaySunrise = sr;
     if (ss > 0) todaySunset  = ss;
-    if (isnan(todayMin_C)) todayMin_C = cur["main"]["temp_min"] | NAN;
-    if (isnan(todayMax_C)) todayMax_C = cur["main"]["temp_max"] | NAN;
+    float tcur = cur["main"]["temp"] | NAN;
+    if (isfinite(tcur)) {
+      if (!isfinite(todayMin_C) || tcur < todayMin_C) todayMin_C = tcur;
+      if (!isfinite(todayMax_C) || tcur > todayMax_C) todayMax_C = tcur;
+    }
   }
 
   // Roll hourly history
@@ -2513,9 +2505,9 @@ void handleSetupPage() {
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
   html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:800;letter-spacing:.3px;color:#e8eef6}");
-  html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4}");
+  html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4;text-align:left}");
   // Inputs + select share the same theme
-  html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem}");
+  html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem;text-align:left}");
   html += F("input[type=text],select{width:100%;max-width:520px}");
   html += F("input[type=number]{width:100%;max-width:200px}");
   html += F("input[type=text].in-wide,select.in-wide{max-width:600px}");
