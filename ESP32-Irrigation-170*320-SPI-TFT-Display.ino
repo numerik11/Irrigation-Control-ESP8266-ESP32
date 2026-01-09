@@ -1083,6 +1083,8 @@ void loop() {
   if (cachedTm.tm_hour == 0 && cachedTm.tm_min == 0) {
     if (!midnightDone) {
       memset(lastCheckedMinute, -1, sizeof(lastCheckedMinute));
+      todayMin_C = NAN;
+      todayMax_C = NAN;
       midnightDone = true;
     }
   } else midnightDone = false;
@@ -1427,8 +1429,6 @@ void updateCachedWeather() {
       popNext12h_pct = 0; 
       nextRainIn_h   = -1;
       maxGust24h_ms  = 0; 
-      todayMin_C     = NAN; 
-      todayMax_C     = NAN; 
       todaySunrise   = 0;   
       todaySunset    = 0;
 
@@ -1436,8 +1436,6 @@ void updateCachedWeather() {
       if (deserializeJson(fc, cachedForecastData) == DeserializationError::Ok) {
         if (fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
           JsonObject d0 = fc["daily"][0];
-          todayMin_C   = d0["temp"]["min"] | NAN;
-          todayMax_C   = d0["temp"]["max"] | NAN;
           todaySunrise = (time_t)(d0["sunrise"] | 0);
           todaySunset  = (time_t)(d0["sunset"]  | 0);
         }
@@ -1452,18 +1450,11 @@ void updateCachedWeather() {
           int hrs = hr.size();
           int L24 = min(24, hrs);
           int L12 = min(12, hrs);
-          float hourlyMin = NAN;
-          float hourlyMax = NAN;
           for (int i = 0; i < L24; i++) {
             JsonObject h = hr[i];
             float r = 0.0f;
             r += read1h(h["rain"]);
             r += read1h(h["snow"]);
-            float t = h["temp"] | NAN;
-            if (isfinite(t)) {
-              if (!isfinite(hourlyMin) || t < hourlyMin) hourlyMin = t;
-              if (!isfinite(hourlyMax) || t > hourlyMax) hourlyMax = t;
-            }
             if (i < L12) {
               rainNext12h_mm += r;
               int pop = (int)roundf(100.0f * (h["pop"] | 0.0f));
@@ -1477,8 +1468,6 @@ void updateCachedWeather() {
             float g = h["wind_gust"] | 0.0f;
             if (g > maxGust24h_ms) maxGust24h_ms = g;
           }
-          if (!isfinite(todayMin_C) && isfinite(hourlyMin)) todayMin_C = hourlyMin;
-          if (!isfinite(todayMax_C) && isfinite(hourlyMax)) todayMax_C = hourlyMax;
         }
         if (rainNext24h_mm <= 0.0f && fc["daily"].is<JsonArray>() && fc["daily"].size() > 0) {
           JsonObject d0 = fc["daily"][0];
@@ -1510,8 +1499,11 @@ void updateCachedWeather() {
     time_t ss = (time_t)(cur["sys"]["sunset"]  | 0);
     if (sr > 0) todaySunrise = sr;
     if (ss > 0) todaySunset  = ss;
-    if (isnan(todayMin_C)) todayMin_C = cur["main"]["temp_min"] | NAN;
-    if (isnan(todayMax_C)) todayMax_C = cur["main"]["temp_max"] | NAN;
+    float tcur = cur["main"]["temp"] | NAN;
+    if (isfinite(tcur)) {
+      if (!isfinite(todayMin_C) || tcur < todayMin_C) todayMin_C = tcur;
+      if (!isfinite(todayMax_C) || tcur > todayMax_C) todayMax_C = tcur;
+    }
   }
 
   // Roll hourly history
