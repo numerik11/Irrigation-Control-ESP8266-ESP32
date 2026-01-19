@@ -3289,6 +3289,7 @@ void handleSetupPage() {
   html += F(".wrap{max-width:1100px;margin:28px auto;padding:0 16px}");
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
+  html += F(".card.narrow{max-width:960px;margin-left:auto;margin-right:auto}");
   html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:800;letter-spacing:.3px;color:#e8eef6}");
   html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4;text-align:left}");
   // Inputs + select share the same theme
@@ -3353,13 +3354,13 @@ void handleSetupPage() {
   html += F("<div class='wrap'><h1>Setup</h1><form action='/configure' method='POST'>");
 
   // Weather
-  html += F("<div class='card'><h3>Weather</h3>");
+  html += F("<div class='card narrow'><h3>Weather</h3>");
   html += F("<div class='row'><label>API Key</label><input class='in-wide' type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
   html += F("<div class='row'><label>City ID</label><input class='in-med' type='text' name='city' value='"); html += city; html += F("'><small>OpenWeatherMap city id</small></div>");
   html += F("</div>");
 
   // Zones
-  html += F("<div class='card'><h3>Zones</h3>");
+  html += F("<div class='card narrow'><h3>Zones</h3>");
   html += F("<div class='row'><label>Zone Count</label><input class='in-xs' type='number' min='1' max='");
   html += String(MAX_ZONES);
   html += F("' name='zonesMode' value='");
@@ -3376,7 +3377,7 @@ void handleSetupPage() {
 
   // Tank (available for all modes; water source switching only applies when zonesCount==4)
   bool tankMode = (zonesCount == 4);
-  html += F("<div class='card'><h3>Tank & Water Source</h3>");
+  html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
   html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
   html += (tankEnabled ? "checked" : "");
   html += F("><small>Unchecked = ignore tank level and force mains</small></div>");
@@ -3417,25 +3418,26 @@ void handleSetupPage() {
   html += F("</div>"); // end tankCard
   html += F("</div>");
 
-    // Actions
-  html += F("<div class='card'><h3>Actions</h3>");
-  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
-  html += F("<button class='btn' type='submit'>Save</button>");
-  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
-  html += F("<button class='btn-alt' type='button' onclick=\"fetch('/clear_cooldown',{method:'POST'})\">Clear Cooldown</button>");
-  html += F("</div></div>");
-
   // Physical rain & forecast
-  html += F("<div class='card'><h3>Rain Sources</h3>");
+  html += F("<div class='card narrow'><h3>Rain Sources</h3>");
   html += F("<div class='row switchline'><label>Disable OWM Rain</label><input type='checkbox' name='rainForecastDisabled' ");
   html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore OpenWeatherMap rain</small></div>");
   html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
   html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
   html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
   html += F("</div>");
+  html += F("</div>");
+
+      // Actions
+  html += F("<div class='card narrow'><h3>Actions</h3>");
+  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
+  html += F("<button class='btn-alt' type='button' onclick=\"fetch('/clear_cooldown',{method:'POST'})\">Clear Cooldown</button>");
+  html += F("</div></div>");
 
   // Delays & Pause + thresholds
-  html += F("<div class='card'><h3>Delays & Pause</h3>");
+  html += F("<div class='card narrow'><h3>Delays & Pause</h3>");
   html += F("<div class='cols2'>");
 
   // Left column: toggles
@@ -3453,6 +3455,11 @@ void handleSetupPage() {
   html += F("<button class='btn' type='button' id='btn-resume'>Unpause</button>");
   html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
   time_t nowEp = time(nullptr);
+    {
+    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
+    html += String(remain/3600);
+  }
+  html += F("'><small>0 = until manually resumed</small></div>");
   html += F("</div>");
   html += F("<div class='row'><label>LCD Brightness (%)</label><input class='in-xs' type='number' id='tftLevel' min='0' max='100' value='100'><button class='btn' type='button' id='btn-tft-bright'>Set</button></div>");
   html += F("</div>");
@@ -3468,10 +3475,6 @@ void handleSetupPage() {
   html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
   html += String(rainThreshold24h_mm);
   html += F("'><small>Delay if >= threshold (24h total)</small></div>");
-  {
-    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
-    html += String(remain/3600);
-  }
   html += F("'><small>0 = until manually resumed</small></div>");
   html += F("</div>");
 
@@ -3479,7 +3482,7 @@ void handleSetupPage() {
   html += F("</div>"); // end Delays card
 
   // GPIO fallback pins
-  html += F("<div class='card'><details class='collapse' ");
+  html += F("<div class='card narrow'><details class='collapse' ");
   html += (useGpioFallback ? "open" : "");
   html += F("><summary>GPIO Fallback (if I2C relays not found)</summary><div class='collapse-body'><div class='grid'>");
   for (uint8_t i=0;i<MAX_ZONES;i++){
@@ -3500,10 +3503,14 @@ void handleSetupPage() {
   html += F(">");
   html += F("<small>Checked = LOW = ON (active-low relay modules). Unchecked = HIGH = ON.</small></div>");
 
-  html += F("</div></div></details></div>");
+  html += F("</div>");
+  html += F("<div class='row' style='justify-content:flex-end;gap:8px'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("</div>");
+  html += F("</div></details></div>");
 
   // Manual buttons
-  html += F("<div class='card'><h3>Manual Buttons</h3>");
+  html += F("<div class='card narrow'><h3>Manual Buttons</h3>");
   html += F("<div class='row switchline'><label>Select Button Pin</label><input class='in-xs' type='number' min='-1' max='39' name='manualSelectPin' value='");
   html += String(manualSelectPin);
   html += F("'><small>-1 to disable. Uses INPUT_PULLUP; press = LOW.</small></div>");
@@ -3516,7 +3523,7 @@ void handleSetupPage() {
   html += F("</div>");
 
   // Timezone
-  html += F("<div class='card'><h3>Timezone</h3>");
+  html += F("<div class='card narrow'><h3>Timezone</h3>");
 
   // Mode selector - cleaner row, better labels
   html += F("<div class='row switchline'>");
@@ -3569,7 +3576,7 @@ void handleSetupPage() {
   html += F("</div>"); // end Timezone card
 
   // MQTT
-  html += F("<div class='card'><h3>MQTT (Home Assistant)</h3>");
+  html += F("<div class='card narrow'><h3>MQTT (Home Assistant)</h3>");
   html += F("<div class='row switchline'><label>Enable MQTT</label><input type='checkbox' name='mqttEnabled' "); html += (mqttEnabled ? "checked" : ""); html += F("></div>");
   html += F("<div class='row'><label>Broker Host</label><input class='in-wide' type='text' name='mqttBroker' value='"); html += mqttBroker; html += F("'></div>");
   html += F("<div class='row'><label>Port</label><input class='in-xs' type='number' name='mqttPort' value='"); html += String(mqttPort); html += F("'></div>");
