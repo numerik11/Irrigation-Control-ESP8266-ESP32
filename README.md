@@ -1,4 +1,4 @@
-## ESP32 / ESP8266 4/6/16 Zone Irrigation Controller
+## ESP32 / ESP8266 1-16 Zone Irrigation Controller
 
 ESP32 or ESP8266–based irrigation controllers designed to drive up to 6 solenoid zones.
 
