@@ -3459,7 +3459,7 @@ void handleSetupPage() {
     uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
     html += String(remain/3600);
   }
-  html += F("'><small>0 = until manually resumed</small></div>");
+  html += F("'></div>");
   html += F("</div>");
   html += F("<div class='row'><label>LCD Brightness (%)</label><input class='in-xs' type='number' id='tftLevel' min='0' max='100' value='100'><button class='btn' type='button' id='btn-tft-bright'>Set</button></div>");
   html += F("</div>");
@@ -3475,7 +3475,6 @@ void handleSetupPage() {
   html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
   html += String(rainThreshold24h_mm);
   html += F("'><small>Delay if >= threshold (24h total)</small></div>");
-  html += F("'><small>0 = until manually resumed</small></div>");
   html += F("</div>");
 
   html += F("</div>"); // end cols2
