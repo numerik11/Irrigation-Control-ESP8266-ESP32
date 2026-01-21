@@ -62,11 +62,11 @@ static constexpr int16_t TFT_H = 320;
 
 // Choose pins that do NOT clash with your I2C (4/15) or other IO.
 // Example defaults (change to your wiring):
-#define TFT_SCLK  18  // SCL
+#define TFT_SCLK  20  // SCL
 #define TFT_MOSI  23  // SDA
-#define TFT_CS    5   // CS 
+#define TFT_CS    3   // CS 
 #define TFT_DC    13  // DC
-#define TFT_RST   17  // RST
+#define TFT_RST   19  // RST
 #define TFT_BL    32  // or -1 if tied to 3V3
 
 SPIClass TFTSPI(SPI);
@@ -325,6 +325,7 @@ void updateStatusPixel();
 void statusPixelSet(uint8_t r,uint8_t g,uint8_t b);
 bool initTempSensor();
 bool readChipTempC(float& outC);
+bool physicalRainNowRaw();
 
 
 // ===================== Timezone config =====================
@@ -514,9 +515,24 @@ int tankPercent() {
 }
 
 bool isTankLow() {
-  if (zonesCount != 4) return false;
   if (!tankEnabled) return true; // tank disabled => treat as low to force mains
   return tankPercent() <= tankLowThresholdPct;
+}
+
+String sourceModeText() {
+  if (!tankEnabled) return "TankDisabled";
+  if (justUseTank)  return "Force:Tank";
+  if (justUseMains) return "Force:Mains";
+  return isTankLow() ? "Auto:Mains" : "Auto:Tank";
+}
+
+static inline void chooseWaterSource(const char*& src, bool& mainsOn, bool& tankOn) {
+  mainsOn = false; tankOn = false;
+  if (!tankEnabled) { src = "TankDisabled"; mainsOn = true; return; }
+  if (justUseTank)  { src = "Tank";  tankOn  = true; return; }
+  if (justUseMains) { src = "Mains"; mainsOn = true; return; }
+  if (isTankLow())  { src = "Mains"; mainsOn = true; return; }
+  src = "Tank"; tankOn = true;
 }
 
 bool physicalRainNowRaw() {
@@ -526,14 +542,6 @@ bool physicalRainNowRaw() {
   bool wet = (v == HIGH);
   if (rainSensorInvert) wet = !wet;
   return wet;
-}
-
-String sourceModeText() {
-  if (zonesCount != 4) return String(zonesCount) + "-Zone";
-  if (!tankEnabled) return "TankDisabled";
-  if (justUseTank)  return "Force:Tank";
-  if (justUseMains) return "Force:Mains";
-  return isTankLow() ? "Auto:Mains" : "Auto:Tank";
 }
 
 String rainDelayCauseText() {
@@ -624,6 +632,17 @@ inline void gpioZoneWrite(int z, bool on) {
 inline void gpioSourceWrite(bool mainsOn, bool tankOn) {
   if (mainsPin >= 0 && mainsPin <= 39) digitalWrite(mainsPin, gpioLevel(mainsOn));
   if (tankPin  >= 0 && tankPin  <= 39) digitalWrite(tankPin,  gpioLevel(tankOn));
+}
+
+inline void setWaterSourceRelays(bool mainsOn, bool tankOn) {
+  // Prefer PCF outputs for the classic wiring; otherwise drive the configured GPIO pins.
+  if (!useGpioFallback && zonesCount <= 4) {
+    // PCF8574: active-LOW
+    pcfOut.digitalWrite(mainsChannel, mainsOn ? LOW : HIGH);
+    pcfOut.digitalWrite(tankChannel,  tankOn  ? LOW : HIGH);
+  } else {
+    gpioSourceWrite(mainsOn, tankOn);
+  }
 }
 
 inline bool useExpanderForZone(int z) {
@@ -847,6 +866,8 @@ TFTSPI.begin(TFT_SCLK, -1, TFT_MOSI, TFT_CS);
 
   // Improve HTTP responsiveness
   WiFi.setSleep(false); // NEW: disable modem sleep for snappier responses
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // boost TX within legal limit
+  WiFi.enableLongRange(true);          // trade speed for sensitivity
 
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextColor(ST77XX_GREEN);
@@ -1310,6 +1331,8 @@ void wifiCheck() {
     else {
       Serial.println("Reconnected.");
       WiFi.setSleep(false); // keep disabled after reconnect
+      WiFi.setTxPower(WIFI_POWER_19_5dBm);
+      WiFi.enableLongRange(true);
     }
   }
 }
@@ -1348,7 +1371,9 @@ void initGpioPinsForZones() {
     gpioInitOutput(zonePins[i]);
   }
 
-  if (zonesCount == 4 && useGpioFallback) {
+  // Prepare mains/tank GPIO pins when using fallback or when running more than 4 zones
+  // (so PCF pins remain dedicated to zone control).
+  if (useGpioFallback || zonesCount > 4) {
     gpioInitOutput(mainsPin);
     gpioInitOutput(tankPin);
   }
@@ -2424,48 +2449,18 @@ void turnOnZone(int z) {
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
   const char* src = "None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
   if (!usePcf) {
   // Use config for active level
   gpioZoneWrite(z, true);   // ON
 
-  if (zonesCount == 4) {
-    if (justUseTank) {
-      src = "Tank";
-      gpioSourceWrite(false, true);   // mains OFF, tank ON
-    } else if (justUseMains) {
-      src = "Mains";
-      gpioSourceWrite(true, false);   // mains ON, tank OFF
-    } else if (isTankLow()) {
-      src = "Mains";
-      gpioSourceWrite(true, false);   // mains ON, tank OFF
-    } else {
-      src = "Tank";
-      gpioSourceWrite(false, true);   // mains OFF, tank ON
-    }
-  }
+  setWaterSourceRelays(mainsOn, tankOn);
 } else {
     // PCF8574 path unchanged (still active-LOW via expander)
     pcfOut.digitalWrite(PCH[z], LOW); // active-LOW
-    if (zonesCount == 4) {
-      if (justUseTank) {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      } else if (justUseMains) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else if (isTankLow()) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      }
-    }
+    setWaterSourceRelays(mainsOn, tankOn);
   }
 
   logEvent(z, "START", src, false);
@@ -2490,11 +2485,8 @@ void turnOffZone(int z) {
   if (z < 0 || z >= (int)zonesCount || z >= (int)MAX_ZONES) return;
   Serial.printf("[VALVE] Request OFF Z%d\n", z+1);
   const char* src = "None";
-  if (zonesCount == 4)
-    src = justUseTank ? "Tank"
-         : justUseMains ? "Mains"
-         : isTankLow() ? "Mains"
-         : "Tank";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
   bool wasDelayed = rainActive || windActive || isPausedNow() ||
                     !systemMasterEnabled ||
@@ -2506,19 +2498,22 @@ void turnOffZone(int z) {
   if (!usePcf) {
   // OFF everything in fallback according to config
   gpioZoneWrite(z, false);       // OFF
-  if (zonesCount == 4) {
-    gpioSourceWrite(false, false);  // mains OFF, tank OFF
-  }
 } else {
     // PCF8574 path unchanged
     pcfOut.digitalWrite(PCH[z], HIGH);
-    if (zonesCount == 4) {
-      pcfOut.digitalWrite(mainsChannel, HIGH);
-      pcfOut.digitalWrite(tankChannel,  HIGH);
-    }
   }
 
   zoneActive[z] = false;
+
+  bool anyStillOn = false;
+  for (int i = 0; i < (int)zonesCount; i++) {
+    if (zoneActive[i]) { anyStillOn = true; break; }
+  }
+  if (anyStillOn) {
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
+    setWaterSourceRelays(false, false);
+  }
 
 #if ENABLE_TFT
   tft.fillScreen(ST77XX_BLACK);
@@ -2575,47 +2570,17 @@ void turnOnValveManual(int z) {
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
   const char* src = "None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
   if (!usePcf) {
   gpioZoneWrite(z, true);   // ON
 
-  if (zonesCount == 4) {
-    if (justUseTank) {
-      src = "Tank";
-      gpioSourceWrite(false, true);
-    } else if (justUseMains) {
-      src = "Mains";
-      gpioSourceWrite(true, false);
-    } else if (isTankLow()) {
-      src = "Mains";
-      gpioSourceWrite(true, false);
-    } else {
-      src = "Tank";
-      gpioSourceWrite(false, true);
-    }
-  }
+  setWaterSourceRelays(mainsOn, tankOn);
 } else {
     // PCF8574 path unchanged
     pcfOut.digitalWrite(PCH[z], LOW);
-    if (zonesCount == 4) {
-      if (justUseTank) {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      } else if (justUseMains) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else if (isTankLow()) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      }
-    }
+    setWaterSourceRelays(mainsOn, tankOn);
   }
 
   logEvent(z, "MANUAL START", src, false);
@@ -2626,6 +2591,9 @@ void turnOffValveManual(int z) {
   if (!zoneActive[z]) return;
 
   const bool usePcf = useExpanderForZone(z);
+  const char* src="None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
   // Turn this zone OFF
   if (!usePcf) {
@@ -2646,16 +2614,10 @@ void turnOffValveManual(int z) {
     }
   }
 
-  // If no zones left on and we are in 4-zone (tank/mains) mode, turn both feed relays OFF
-  if (!anyStillOn && zonesCount == 4) {
-    if (!usePcf) {
-      // Respect configured polarity for mains/tank
-      gpioSourceWrite(false, false);   // mains OFF, tank OFF
-    } else {
-      // PCF8574: HIGH = OFF on both channels
-      pcfOut.digitalWrite(mainsChannel, HIGH);
-      pcfOut.digitalWrite(tankChannel,  HIGH);
-    }
+  if (anyStillOn) {
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
+    setWaterSourceRelays(false, false);   // mains OFF, tank OFF
   }
 }
 
@@ -2781,7 +2743,8 @@ void handleRoot() {
   html += F(".section{padding:var(--pad)}");
   html += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap)}");
   html += F(".card{background:var(--card);border:1px solid var(--glass-brd);border-radius:var(--radius);box-shadow:var(--shadow);padding:var(--pad)}");
-  html += F(".card h3{margin:0 0 8px 0;font-size:1.15rem;color:var(--ink);font-weight:800;letter-spacing:.3px}");
+  html += F(".card h3{margin:0 0 10px 0;font-size:1.15rem;color:var(--ink);font-weight:850;letter-spacing:.35px;");
+  html += F("padding-bottom:6px;border-bottom:2px solid var(--primary);display:flex;align-items:center;gap:8px}");
   html += F(".card h4{margin:6px 0 6px 0;font-size:.95rem;color:var(--muted);font-weight:700;letter-spacing:.2px}");
   html += F(".chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border:1px solid var(--chip-brd);border-radius:999px;padding:8px 14px;font-weight:650;white-space:nowrap;font-size:.95rem;color:var(--ink)}");
   html += F(".big{font-weight:800;font-size:1.3rem}.hint{color:var(--muted);font-size:.9rem;margin-top:4px}.sub{color:var(--muted);font-size:.88rem}");
@@ -2823,6 +2786,12 @@ void handleRoot() {
   html += F(".zone-meta-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:.82rem;color:var(--muted)}");
   html += F(".zone-meta-row .pill-soft{padding:4px 10px;border-radius:999px;background:var(--chip);border:1px solid var(--chip-brd)}");
   html += F(".zone-meta-row b{font-weight:700}");
+  html += F("body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}");
+  html += F(".card{transition:transform .12s ease,box-shadow .12s ease}");
+  html += F(".card:hover{transform:translateY(-2px);box-shadow:0 16px 34px rgba(0,0,0,.18)}");
+  html += F(".btn:hover{filter:brightness(1.05)}");
+  html += F(".chip:hover,.pill:hover{filter:brightness(1.02)}");
+  html += F(".btn:focus-visible,.pill:focus-visible,.chip:focus-visible{outline:2px solid var(--primary);outline-offset:2px}");
 
   // Schedules styles (collapsible, mobile-friendly)
   html += F(".sched{margin-top:var(--gap)}");
@@ -2913,7 +2882,7 @@ html += F("</b></a></div>");
   html += F("<div class='grid' style='grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px'>");
   html += F("<div class='chip'><b>Low</b>&nbsp;<b id='tmin'>---</b> C</div>");
   html += F("<div class='chip'><b>High</b>&nbsp;<b id='tmax'>---</b> C</div>");
-  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b></div>");
+  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b> kPa</div>");
   html += F("<div class='chip'><span class='sub'>Sunrise</span>&nbsp;<b id='sunr'>--:--</b></div>");
   html += F("<div class='chip'><span class='sub'>Sunset</span>&nbsp;<b id='suns'>--:--</b></div>");
   html += F("</div></div>");
@@ -3239,7 +3208,7 @@ html += F("</b></a></div>");
   html += F("if(tmax) tmax.textContent=(st.tmax??0).toFixed(0);");
   html += F("if(sunr) sunr.textContent = st.sunriseLocal || '--:--';");
   html += F("if(suns) suns.textContent = st.sunsetLocal  || '--:--';");
-  html += F("if(press) press.textContent = (typeof st.pressure==='number' && st.pressure>0) ? st.pressure : '--';");
+  html += F("if(press){ const p=st.pressure; press.textContent=(typeof p==='number' && p>0)?(p/10).toFixed(1):'--'; }");
 
   // keep master pill synced
   html += F("const bm=document.getElementById('btn-master'); const ms=document.getElementById('master-state');");
@@ -3290,7 +3259,8 @@ void handleSetupPage() {
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
   html += F(".card.narrow{max-width:960px;margin-left:auto;margin-right:auto}");
-  html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:800;letter-spacing:.3px;color:#e8eef6}");
+  html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:850;letter-spacing:.35px;color:#f2f6ff;");
+  html += F("padding-bottom:6px;border-bottom:2px solid #1c74d9;display:flex;align-items:center;gap:8px}");
   html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4;text-align:left}");
   // Inputs + select share the same theme
   html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem;text-align:left}");
@@ -3338,6 +3308,11 @@ void handleSetupPage() {
   html += F("select{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:32px;");
   html += F("background-image:linear-gradient(45deg,transparent 50%,#9aa6c2 50%),linear-gradient(135deg,#9aa6c2 50%,transparent 50%);");
   html += F("background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}");
+  html += F("body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}");
+  html += F(".card{transition:transform .12s ease,box-shadow .12s ease}");
+  html += F(".card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.22)}");
+  html += F(".btn:hover,.btn-alt:hover{filter:brightness(1.06)}");
+  html += F("input:focus-visible,select:focus-visible{outline:2px solid #1c74d9;outline-offset:2px}");
 
   // Desktop tuning
   html += F("@media(min-width:1024px){");
@@ -3365,7 +3340,7 @@ void handleSetupPage() {
   html += String(MAX_ZONES);
   html += F("' name='zonesMode' value='");
   html += String(zonesCount);
-  html += F("'><small>4 enables Tank/Mains mode. Up to ");
+  html += F("'><small>Tank/Mains works with any zone count. Up to ");
   html += String(MAX_ZONES);
   html += F(" zones supported.</small></div>");
 
@@ -3375,8 +3350,7 @@ void handleSetupPage() {
   html += F("> Run Zones Together</label><small>Unchecked = One at a time</small></div>");
   html += F("</div>");
 
-  // Tank (available for all modes; water source switching only applies when zonesCount==4)
-  bool tankMode = (zonesCount == 4);
+  // Tank (available for all modes; water source switching works with any zone count)
   html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
   html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
   html += (tankEnabled ? "checked" : "");
@@ -3388,29 +3362,26 @@ void handleSetupPage() {
   // Auto
   html += F("<label><input type='radio' name='waterMode' value='auto' ");
   if (!justUseTank && !justUseMains) html += F("checked");
-  if (!tankMode) html += F(" disabled");
   html += F("> Auto (Tank + Mains)</label>");
 
   // Only Tank
   html += F("<label><input type='radio' name='waterMode' value='tank' ");
   if (justUseTank) html += F("checked");
-  if (!tankMode) html += F(" disabled");
   html += F("> Only Tank</label>");
 
   // Only Mains
   html += F("<label><input type='radio' name='waterMode' value='mains' ");
   if (justUseMains) html += F("checked");
-  if (!tankMode) html += F(" disabled");
   html += F("> Only Mains</label>");
 
   html += F("<small>");
-  html += (tankMode ? "Active (4-zone tank/mains mode)" : "Water source switching only applies in 4-zone mode");
+  html += "Tank/mains switching works with any zone count";
   html += F("</small></div>");
 
   html += F("<div class='row'><label>Tank Low Threshold (%)</label>"
             "<input class='in-xs' type='number' min='0' max='100' name='tankThresh' value='");
   html += String(tankLowThresholdPct);
-  html += F("'><small>Switch to mains if tank below this level (only when 4-zone)</small></div>");
+  html += F("'><small>Switch to mains if tank drops below this level</small></div>");
 
   html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='1' max='20' name='tankLevelPin' value='");
   html += String(tankLevelPin); html += F("'><small>ADC pin (ESP32-S3: GPIO1-20)</small></div>");
@@ -3491,9 +3462,9 @@ void handleSetupPage() {
   }
   html += F("<div class='row'><label></label><small>Use -1 to leave a zone unassigned. Zones above the 6 PCF channels use GPIO pins when set.</small></div>");
   html += F("<div class='row'><label>Main Pin</label><input class='in-xs' type='number' min='0' max='39' name='mainsPin' value='");
-  html += String(mainsPin); html += F("'><small>4-zone fallback</small></div>");
+  html += String(mainsPin); html += F("'><small>GPIO relay for mains (used when GPIO mode or >4 zones)</small></div>");
   html += F("<div class='row'><label>Tank Relay Pin</label><input class='in-xs' type='number' min='0' max='39' name='tankPin' value='");
-  html += String(tankPin); html += F("'><small>4-zone fallback relay</small></div>");
+  html += String(tankPin); html += F("'><small>GPIO relay for tank (used when GPIO mode or >4 zones)</small></div>");
 
   // NEW: GPIO active polarity
   html += F("<div class='row switchline'><label>GPIO Active Low</label>");
@@ -3901,8 +3872,6 @@ void loadConfig() {
     if (z > (int)MAX_ZONES) z = MAX_ZONES;
     zonesCount = (uint8_t)z;
   }
-  if (zonesCount != 4) { justUseTank = false; justUseMains = false; }
-
   if ((s = _safeReadLine(f)).length()) rainSensorEnabled = (s.toInt() == 1);
   if ((s = _safeReadLine(f)).length()) rainSensorPin     = s.toInt();
   if ((s = _safeReadLine(f)).length()) rainSensorInvert  = (s.toInt() == 1);
@@ -4140,7 +4109,6 @@ void handleConfigure() {
     if (z > (int)MAX_ZONES) z = MAX_ZONES;
     zonesCount = (uint8_t)z;
   }
-  if (zonesCount != 4) { justUseTank = false; justUseMains = false; }
 
   // Run mode (sequential vs concurrent)
   runZonesConcurrent = server.hasArg("runConcurrent");
