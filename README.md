@@ -89,11 +89,13 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
 ## Flashing the Controller
 
 1. **Install ESP32 Boards (Arduino IDE)**  
-   *File → Preferences → Additional Boards URLs:*  
-   `https://dl.espressif.com/dl/package_esp32_index.json`  
+   *File → Preferences → Additional Boards URLs:*
+   Paste:
+   `https://dl.espressif.com/dl/package_esp32_index.json`
+   Then Goto:
    *Tools → Board → Boards Manager… →* install **ESP32 by Espressif Systems**.
 
-2. **Select a Board**  
+3. **Select a Board**  
    *Tools → Board →* **ESP32 Dev Module** (works for KC868-A6)  
    Suggested: Flash 80 MHz, Upload 115200–921600.
    
