@@ -37,8 +37,8 @@ extern "C" {
 // ---------- Hardware ----------
 static const uint8_t MAX_ZONES = 16;
 
-constexpr uint8_t I2C_SDA = 4;   //8 for s3
-constexpr uint8_t I2C_SCL = 15;  //9 for s3
+constexpr uint8_t I2C_SDA = 8;   //8 for s3
+constexpr uint8_t I2C_SCL = 9;  //9 for s3
  
 #ifndef STATUS_PIXEL_PIN
 #define STATUS_PIXEL_PIN 48   // WS2812 status LED
@@ -2286,7 +2286,7 @@ html += F("</b></a></div>");
 
   html += F("<div class='card'><h3>Current Weather</h3>");
   html += F("<div class='grid' style='grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px'>");
-  html += F("<div class='chip'>Temp <span id='tempChip'>"); html += (isnan(temp) ? String("--") : String(temp,1)+" C"); html += F("</span></div>");
+  html += F("<div class='chip'>Temp <span id='tempChip'>"); html += (isnan(temp) ? String("--") : String(temp,1)+" C"); html += F("</span> <span id='tempTrend' style='font-weight:900;'>→</span></div>");
   html += F("<div class='chip'>Feels <span id='feelsChip'>"); html += (isnan(feels) ? String("--") : String(feels,1)+" C"); html += F("</span></div>");
   html += F("<div class='chip'>Humidity <span id='humChip'>");  html += (isnan(hum)  ? String("--") : String((int)hum)+" %"); html += F("</span></div>");
   html += F("<div class='chip'>Wind <span id='windChip'>"); html += (isnan(ws)   ? String("--") : String(ws,1)+" m/s"); html += F("</span></div>");
@@ -2551,7 +2551,7 @@ html += F("</b></a></div>");
   // --- JS ---
   html += F("<script>");
   html += F("function pad(n){return n<10?'0'+n:n;}");
-  html += F("let _devEpoch=null; let _tickTimer=null;");
+  html += F("let _devEpoch=null; let _tickTimer=null; let _lastTemp=null;");
   html += F("function startDeviceClock(seedSec){_devEpoch=seedSec;if(_tickTimer)clearInterval(_tickTimer);");
   html += F("const draw=()=>{if(_devEpoch==null)return; const d=new Date(_devEpoch*1000);");
   html += F("const h=pad(d.getHours()),m=pad(d.getMinutes()),s=pad(d.getSeconds());");
@@ -2647,7 +2647,15 @@ html += F("</b></a></div>");
   html += F("if(sunr) sunr.textContent = st.sunriseLocal || '--:--';");
   html += F("if(suns) suns.textContent = st.sunsetLocal  || '--:--';");
   html += F("if(press){ const p=st.pressure; press.textContent=(typeof p==='number' && p>0)?p.toFixed(0):'--'; }");
-  html += F("const tempEl=document.getElementById('tempChip'); if(tempEl){ const v=st.temp; tempEl.textContent=(typeof v==='number')?v.toFixed(1)+' C':'--'; }");
+  html += F("const tempEl=document.getElementById('tempChip'); const trendEl=document.getElementById('tempTrend');");
+  html += F("if(tempEl){ const v=st.temp; let arrow='\\u2192';");
+  html += F("  if(typeof v==='number'){");
+  html += F("    tempEl.textContent=v.toFixed(1)+' C';");
+  html += F("    if(_lastTemp!==null){ const d=v-_lastTemp; if(d>0.1) arrow='\\u2191'; else if(d<-0.1) arrow='\\u2193'; }");
+  html += F("    _lastTemp=v;");
+  html += F("  } else { tempEl.textContent='--'; _lastTemp=null; }");
+  html += F("  if(trendEl){ trendEl.textContent=arrow; trendEl.style.color=(arrow==='\\u2191')?'#16a34a':(arrow==='\\u2193')?'#dc2626':'inherit'; }");
+  html += F("}");
   html += F("const feelsEl=document.getElementById('feelsChip'); if(feelsEl){ const v=st.feels_like; feelsEl.textContent=(typeof v==='number')?v.toFixed(1)+' C':'--'; }");
   html += F("const humEl=document.getElementById('humChip'); if(humEl){ const v=st.humidity; humEl.textContent=(typeof v==='number')?Math.round(v)+' %':'--'; }");
   html += F("const windEl=document.getElementById('windChip'); if(windEl){ const v=st.wind; windEl.textContent=(typeof v==='number')?v.toFixed(1)+' m/s':'--'; }");
