@@ -23,6 +23,7 @@
 #include <PCF8574.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_NeoPixel.h>
 #include <esp_event.h>
 #include <esp_system.h>
 #include <math.h>
@@ -34,13 +35,21 @@ extern "C" {
 #include <PubSubClient.h>   // MQTT
 
 // ---------- Hardware ----------
-static const uint8_t MAX_ZONES = 6;
+static const uint8_t MAX_ZONES = 16;
+
 constexpr uint8_t I2C_SDA = 4;
 constexpr uint8_t I2C_SCL = 15;
+
+#ifndef STATUS_PIXEL_PIN
+#define STATUS_PIXEL_PIN 48   // WS2812 status LED
+#endif
+static const uint8_t STATUS_PIXEL_COUNT = 1;
 
 TwoWire I2Cbus = TwoWire(0);
 PCF8574 pcfIn (&I2Cbus, 0x22, I2C_SDA, I2C_SCL);
 PCF8574 pcfOut(&I2Cbus, 0x24, I2C_SDA, I2C_SCL);
+Adafruit_NeoPixel statusPixel(STATUS_PIXEL_COUNT, STATUS_PIXEL_PIN, NEO_GRB + NEO_KHZ800);
+bool statusPixelReady = false;
 
 #define SCREEN_ADDRESS 0x3C
 #define SCREEN_WIDTH 128
@@ -57,19 +66,23 @@ const uint8_t ALL_P = 6;
 const uint8_t PCH[ALL_P] = { P0, P1, P2, P3, P4, P5 };
 uint8_t mainsChannel = P4; // 4-zone mode
 uint8_t tankChannel  = P5; // 4-zone mode
-uint8_t zonesCount   = 4;  // 4 or 6
+uint8_t zonesCount   = 4;  // 1..16 (4 enables tank/mains behaviour)
 
 // GPIO fallback (configurable polarity)
 bool useGpioFallback = false;
 bool gpioActiveLow   = true;
 bool relayActiveHigh = true;
+bool tankEnabled     = true;
 
-uint8_t zonePins[MAX_ZONES] = {18, 19, 12, 13, 25, 26};
-uint8_t mainsPin = 25;
-uint8_t tankPin  = 26;
+int zonePins[MAX_ZONES] = {
+  18, 19, 12, 13, 25, 26,   // defaults for first 6 (PCF + two GPIO)
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1   // extra slots up to 16
+};
+int mainsPin = 25;
+int tankPin  = 26;
 
 const int LED_PIN  = 4;
-int tankSensorPin  = 36; // ADC1_CH0
+int tankLevelPin  = 11; // ADC input
 
 // Physical rain sensor
 bool rainSensorEnabled = false;
@@ -150,11 +163,18 @@ int startHour2[MAX_ZONES] = {0};
 int startMin2 [MAX_ZONES] = {0};
 int durationMin[MAX_ZONES] = {0};
 int durationSec[MAX_ZONES] = {0};
-int lastCheckedMinute[MAX_ZONES] = { -1, -1, -1, -1, -1, -1 };
+int lastCheckedMinute[MAX_ZONES] = {
+  -1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1
+};
 
 int tankEmptyRaw = 100;
 int tankFullRaw  = 900;
-String zoneNames[MAX_ZONES] = {"Zone 1","Zone 2","Zone 3","Zone 4","Zone 5","Zone 6"};
+String zoneNames[MAX_ZONES] = {
+  "Zone 1","Zone 2","Zone 3","Zone 4","Zone 5","Zone 6",
+  "Zone 7","Zone 8","Zone 9","Zone 10","Zone 11","Zone 12",
+  "Zone 13","Zone 14","Zone 15","Zone 16"
+};
 
 unsigned long zoneStartMs[MAX_ZONES] = {0};
 unsigned long lastScreenRefresh = 0;
@@ -236,6 +256,8 @@ void initManualButtons();
 void tickManualButtons();
 void showManualSelection();
 void drawManualSelection();
+void statusPixelSet(uint8_t r,uint8_t g,uint8_t b);
+void updateStatusPixel();
 
 
 // ===================== Timezone config =====================
@@ -373,17 +395,86 @@ static String cleanName(String s) {
   return s;
 }
 
+inline bool isValidAdcPin(int pin) {
+  // Generic guard for ESP32 family (0..39 are GPIO-capable)
+  return (pin >= 0 && pin <= 39);
+}
+
 int tankPercent() {
+  if (!isValidAdcPin(tankLevelPin)) {
+    static bool warned = false;
+    if (!warned) {
+      Serial.printf("[TANK] Invalid ADC pin %d.\n", tankLevelPin);
+      warned = true;
+    }
+    return 0;
+  }
   const int N=8; uint32_t acc=0;
-  for (int i=0;i<N;i++){ acc += analogRead(tankSensorPin); delayMicroseconds(200); }
+  for (int i=0;i<N;i++){ acc += analogRead(tankLevelPin); delayMicroseconds(200); }
   int raw=acc/N;
   int pct = map(raw, tankEmptyRaw, tankFullRaw, 0, 100);
   return constrain(pct, 0, 100);
 }
 
 bool isTankLow() {
-  if (zonesCount == 6) return false;
+  if (!tankEnabled) return true; // disabled => force mains
   return tankPercent() <= tankLowThresholdPct;
+}
+
+String sourceModeText() {
+  if (zonesCount != 4) return "NoTank";
+  if (!tankEnabled) return "TankDisabled";
+  if (justUseTank)  return "Force:Tank";
+  if (justUseMains) return "Force:Mains";
+  return isTankLow() ? "Auto:Mains" : "Auto:Tank";
+}
+
+static inline void chooseWaterSource(const char*& src, bool& mainsOn, bool& tankOn) {
+  mainsOn = false; tankOn = false;
+  if (zonesCount != 4) { src = "NoTank"; return; }  // non-4-zone modes: no mains/tank relays
+  if (!tankEnabled) { src = "TankDisabled"; mainsOn = true; return; }
+  if (justUseTank)  { src = "Tank";  tankOn  = true; return; }
+  if (justUseMains) { src = "Mains"; mainsOn = true; return; }
+  if (isTankLow())  { src = "Mains"; mainsOn = true; return; }
+  src = "Tank"; tankOn = true;
+}
+
+void statusPixelSet(uint8_t r,uint8_t g,uint8_t b) {
+  if (!statusPixelReady) return;
+  statusPixel.setPixelColor(0, statusPixel.Color(r,g,b));
+  statusPixel.show();
+}
+
+void updateStatusPixel() {
+  if (!statusPixelReady) return;
+
+  // Default: OK (green)
+  uint8_t r = 0, g = 20, b = 0;
+
+  // Is any zone currently active?
+  bool anyZoneOn = false;
+  for (int i = 0; i < (int)zonesCount; i++) {
+    if (zoneActive[i]) { anyZoneOn = true; break; }
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    // Wi-Fi not connected yet: magenta
+    r = 20; g = 0; b = 12;
+  } else if (anyZoneOn) {
+    // Watering in progress: Blue
+    r = 0; g = 0; b = 24;
+  } else if (!systemMasterEnabled || isPausedNow()) {
+    // Master off or paused: red
+    r = 24; g = 0; b = 0;
+  } else if (rainActive || windActive || isBlockedNow()) {
+    // Weather/cooldown blocking: amber
+    r = 24; g = 12; b = 0;
+  } else if (useGpioFallback) {
+    // Fallback mode: Green
+    r = 0; g = 60; b = 0;
+  }
+
+  statusPixelSet(r,g,b);
 }
 
 bool physicalRainNowRaw() {
@@ -393,13 +484,6 @@ bool physicalRainNowRaw() {
   bool wet = (v == HIGH);
   if (rainSensorInvert) wet = !wet;
   return wet;
-}
-
-String sourceModeText() {
-  if (zonesCount == 6) return "6-Zone";
-  if (justUseTank)  return "Force:Tank";
-  if (justUseMains) return "Force:Mains";
-  return isTankLow() ? "Auto:Mains" : "Auto:Tank";
 }
 
 String rainDelayCauseText() {
@@ -439,7 +523,8 @@ String rainDelayCauseText() {
 
     if (!systemMasterEnabled) return "Master Off";
     if (isPausedNow())        return "Paused";
-    return "No Rain";
+    if (windActive)           return "Windy";
+    return "None";
   }
 
   // Currently in a rain-delay state
@@ -450,15 +535,12 @@ String rainDelayCauseText() {
 }
 
 static const char* kHost = "espirrigation";
-static const IPAddress kStaIp(192, 168, 1, 123);
-static const IPAddress kStaGateway(192, 168, 1, 1);
-static const IPAddress kStaSubnet(255, 255, 255, 0);
-static const IPAddress kStaDns1(192, 168, 1, 1);
+static const wifi_power_t kWifiTxPower = WIFI_POWER_19_5dBm;
 
 static void mdnsStart() {
   MDNS.end(); // in case it was running
   if (MDNS.begin(kHost)) {
-    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("_http", "_tcp", 80);
     Serial.println("[mDNS] started: http://espirrigation.local/");
   } else {
     Serial.println("[mDNS] begin() failed");
@@ -495,18 +577,36 @@ inline int gpioLevel(bool on) {
 }
 
 inline void gpioInitOutput(int pin) {
+  if (pin < 0 || pin > 39) return;
   pinMode(pin, OUTPUT);
   digitalWrite(pin, gpioLevel(false));  // ensure OFF
 }
 
 inline void gpioZoneWrite(int z, bool on) {
   if (z < 0 || z >= (int)MAX_ZONES) return;
-  digitalWrite(zonePins[z], gpioLevel(on));
+  int pin = zonePins[z];
+  if (pin < 0 || pin > 39) return;
+  digitalWrite(pin, gpioLevel(on));
 }
 
 inline void gpioSourceWrite(bool mainsOn, bool tankOn) {
-  digitalWrite(mainsPin, gpioLevel(mainsOn));
-  digitalWrite(tankPin, gpioLevel(tankOn));
+  if (mainsPin >= 0 && mainsPin <= 39) digitalWrite(mainsPin, gpioLevel(mainsOn));
+  if (tankPin  >= 0 && tankPin  <= 39) digitalWrite(tankPin,  gpioLevel(tankOn));
+}
+
+inline void setWaterSourceRelays(bool mainsOn, bool tankOn) {
+  if (zonesCount != 4) return; // only meaningful in 4-zone tank/mains mode
+  if (!useGpioFallback) {
+    // PCF8574: active-LOW
+    pcfOut.digitalWrite(mainsChannel, mainsOn ? LOW : HIGH);
+    pcfOut.digitalWrite(tankChannel,  tankOn  ? LOW : HIGH);
+  } else {
+    gpioSourceWrite(mainsOn, tankOn);
+  }
+}
+
+inline bool useExpanderForZone(int z) {
+  return (!useGpioFallback && z >= 0 && z < (int)ALL_P);
 }
 
 
@@ -581,6 +681,18 @@ void setup() {
 
   pinMode(LED_PIN, OUTPUT);
 
+  // Status pixel (WS2812)
+  if (STATUS_PIXEL_PIN >= 0) {
+    statusPixel.begin();
+    statusPixel.setBrightness(32);
+    statusPixel.clear();
+    statusPixel.show();
+    statusPixelReady = true;
+    statusPixelSet(0, 0, 20); // boot = blue
+  } else {
+    statusPixelReady = false;
+  }
+
   // OLED boot splash
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println("SSD1306 init failed");
@@ -595,15 +707,25 @@ void setup() {
 
   // Hostname + WiFi events
   WiFi.setHostname(kHost);
+  WiFi.persistent(true);           // keep creds in NVS across resets
+  WiFi.setAutoReconnect(true);
 
-  // WiFiManager connect
-  wifiManager.setTimeout(180);
-  wifiManager.setSTAStaticIPConfig(kStaIp, kStaGateway, kStaSubnet, kStaDns1);
+  // WiFiManager connect (prefer fast STA connect; fall back to portal with timeout)
+  wifiManager.setWiFiAutoReconnect(true); // extra nudge for ESP32(S3)
+  wifiManager.setConnectRetries(6);       // give STA more chances before portal
+  wifiManager.setConnectTimeout(20);      // seconds per retry
+  wifiManager.setSaveConnect(true);       // reconnect immediately after saving
+  wifiManager.setTimeout(45);             // stop trying after 45s
+  wifiManager.setConfigPortalTimeout(120);   // portal stays up max 2 minutes
+  wifiManager.setBreakAfterConfig(true);     // exit once credentials are saved
+  WiFi.mode(WIFI_STA);                        // ensure STA mode for S2/S3
   if (!wifiManager.autoConnect("ESPIrrigationAP")) {
-    ESP.restart();
+    Serial.println("WiFi connect failed -> opening config portal (ESPIrrigationAP).");
+    wifiManager.startConfigPortal("ESPIrrigationAP");  // limited-time portal
   }
 
   // Improve HTTP responsiveness
+  WiFi.setTxPower(kWifiTxPower);
   WiFi.setSleep(false); // NEW: disable modem sleep for snappier responses
 
   // Connected screen
@@ -794,14 +916,14 @@ void setup() {
   // Tank calibration endpoints
   server.on("/setTankEmpty", HTTP_POST, []() {
     HttpScope _scope;
-    tankEmptyRaw = analogRead(tankSensorPin);
+    tankEmptyRaw = analogRead(tankLevelPin);
     saveConfig();
     server.sendHeader("Location", "/tank", true);
     server.send(302, "text/plain", "");
   });
   server.on("/setTankFull", HTTP_POST, []() {
     HttpScope _scope;
-    tankFullRaw = analogRead(tankSensorPin);
+    tankFullRaw = analogRead(tankLevelPin);
     saveConfig();
     server.sendHeader("Location", "/tank", true);
     server.send(302, "text/plain", "");
@@ -910,14 +1032,13 @@ void loop() {
   ArduinoOTA.handle();
   #endif
 
-  // NEW: do timed weather updates here only (never inside HTTP handlers)
-  tickWeather();
-
+  // Service HTTP first (keeps UI responsive), then background tasks
   server.handleClient();
   wifiCheck();
   checkWindRain();
   mqttEnsureConnected();
   mqttPublishStatus();
+  tickWeather();          // timed weather fetch (non-blocking)
   tickManualButtons();
 
   // Hard block while paused/master off/cooldown
@@ -952,6 +1073,13 @@ void loop() {
 
   if (!useGpioFallback && (now - lastI2cCheck >= I2C_CHECK_MS)) {
     lastI2cCheck = now; checkI2CHealth();
+  }
+
+  // WS2812 status pixel (non-blocking, light refresh)
+  static uint32_t lastPixelUpdate = 0;
+  if (statusPixelReady && now - lastPixelUpdate >= 500) {
+    lastPixelUpdate = now;
+    updateStatusPixel();
   }
 
   bool anyActive=false;
@@ -1027,11 +1155,22 @@ void loop() {
 void wifiCheck() {
   if (WiFi.status()!=WL_CONNECTED) {
     Serial.println("Reconnecting WiFi...");
-    WiFi.disconnect(); delay(600);
-    if (!wifiManager.autoConnect("ESPIrrigationAP")) Serial.println("Reconnection failed.");
-    else {
+    WiFi.disconnect(false, false);   // do NOT erase saved credentials
+    WiFi.reconnect();
+
+    // wait up to ~8s for reconnect using stored creds (no portal)
+    unsigned long t0 = millis();
+    while (WiFi.status()!=WL_CONNECTED && (millis() - t0) < 8000UL) {
+      delay(250);
+    }
+
+    if (WiFi.status()==WL_CONNECTED) {
       Serial.println("Reconnected.");
       WiFi.setSleep(false); // keep disabled after reconnect
+      WiFi.setTxPower(kWifiTxPower);
+      WiFi.enableLongRange(true);
+    } else {
+      Serial.println("Reconnection failed (kept creds, not opening portal).");
     }
   }
 }
@@ -1651,6 +1790,8 @@ bool hasDurationCompleted(int zone) {
 }
 
 void turnOnZone(int z) {
+  if (z < 0 || z >= (int)zonesCount || z >= (int)MAX_ZONES) return;
+
   checkWindRain();
   Serial.printf("[VALVE] Request ON Z%d rain=%d wind=%d blocked=%d\n",
                 z+1, rainActive?1:0, windActive?1:0, isBlockedNow()?1:0);
@@ -1658,6 +1799,16 @@ void turnOnZone(int z) {
   if (isBlockedNow())  { cancelStart(z, "BLOCKED", false); return; }
   if (rainActive)      { cancelStart(z, "RAIN",    true ); return; }
   if (windActive)      { cancelStart(z, "WIND",    false); return; }
+
+  const bool usePcf = useExpanderForZone(z);
+  if (!usePcf) {
+    int pin = zonePins[z];
+    if (pin < 0 || pin > 39) {
+      Serial.printf("[VALVE] Z%d has no GPIO pin assigned; skipping\n", z+1);
+      cancelStart(z, "NO_PIN", false);
+      return;
+    }
+  }
 
   bool anyOn = false;
   for (int i = 0; i < (int)zonesCount; i++) {
@@ -1671,49 +1822,18 @@ void turnOnZone(int z) {
 
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
+
   const char* src = "None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
-  if (useGpioFallback) {
-  // Use config for active level
-  gpioZoneWrite(z, true);   // ON
-
-  if (zonesCount == 4) {
-    if (justUseTank) {
-      src = "Tank";
-      gpioSourceWrite(false, true);   // mains OFF, tank ON
-    } else if (justUseMains) {
-      src = "Mains";
-      gpioSourceWrite(true, false);   // mains ON, tank OFF
-    } else if (isTankLow()) {
-      src = "Mains";
-      gpioSourceWrite(true, false);   // mains ON, tank OFF
-    } else {
-      src = "Tank";
-      gpioSourceWrite(false, true);   // mains OFF, tank ON
-    }
-  }
-} else {
-    // PCF8574 path unchanged (still active-LOW via expander)
-    pcfOut.digitalWrite(PCH[z], LOW); // active-LOW
-    if (zonesCount == 4) {
-      if (justUseTank) {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      } else if (justUseMains) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else if (isTankLow()) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      }
-    }
+  if (!usePcf) {
+    gpioZoneWrite(z, true);   // ON via GPIO
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
+    // PCF8574 path: active-LOW
+    pcfOut.digitalWrite(PCH[z], LOW);
+    setWaterSourceRelays(mainsOn, tankOn);
   }
 
   logEvent(z, "START", src, false);
@@ -1729,35 +1849,38 @@ void turnOnZone(int z) {
 }
 
 void turnOffZone(int z) {
+  if (z < 0 || z >= (int)zonesCount || z >= (int)MAX_ZONES) return;
   Serial.printf("[VALVE] Request OFF Z%d\n", z+1);
   const char* src = "None";
-  if (zonesCount == 4)
-    src = justUseTank ? "Tank"
-         : justUseMains ? "Mains"
-         : isTankLow() ? "Mains"
-         : "Tank";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
   bool wasDelayed = rainActive || windActive || isPausedNow() ||
                     !systemMasterEnabled ||
                     (rainCooldownUntilEpoch > time(nullptr));
   logEvent(z, "STOPPED", src, wasDelayed);
 
-  if (useGpioFallback) {
-  // OFF everything in fallback according to config
-  gpioZoneWrite(z, false);       // OFF
-  if (zonesCount == 4) {
-    gpioSourceWrite(false, false);  // mains OFF, tank OFF
-  }
-} else {
+  const bool usePcf = useExpanderForZone(z);
+
+  if (!usePcf) {
+    // OFF the requested zone
+    gpioZoneWrite(z, false);
+  } else {
     // PCF8574 path unchanged
     pcfOut.digitalWrite(PCH[z], HIGH);
-    if (zonesCount == 4) {
-      pcfOut.digitalWrite(mainsChannel, HIGH);
-      pcfOut.digitalWrite(tankChannel,  HIGH);
-    }
   }
 
   zoneActive[z] = false;
+
+  bool anyStillOn = false;
+  for (int i = 0; i < (int)zonesCount; i++) {
+    if (zoneActive[i]) { anyStillOn = true; break; }
+  }
+  if (anyStillOn) {
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
+    setWaterSourceRelays(false, false);
+  }
 
   display.clearDisplay();
   display.setTextSize(2);
@@ -1769,8 +1892,18 @@ void turnOffZone(int z) {
 }
 
 void turnOnValveManual(int z) {
-  if (z >= zonesCount) return;
+  if (z < 0 || z >= (int)zonesCount || z >= (int)MAX_ZONES) return;
   if (zoneActive[z])   return;
+
+  const bool usePcf = useExpanderForZone(z);
+  if (!usePcf) {
+    int pin = zonePins[z];
+    if (pin < 0 || pin > 39) {
+      Serial.printf("[VALVE] Z%d has no GPIO pin assigned; skipping manual start\n", z+1);
+      cancelStart(z, "NO_PIN", false);
+      return;
+    }
+  }
 
   // Respect run mode overlap rules
   for (int i = 0; i < (int)zonesCount; i++) {
@@ -1791,58 +1924,32 @@ void turnOnValveManual(int z) {
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
   const char* src = "None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
 
-  if (useGpioFallback) {
-  gpioZoneWrite(z, true);   // ON
-
-  if (zonesCount == 4) {
-    if (justUseTank) {
-      src = "Tank";
-      gpioSourceWrite(false, true);
-    } else if (justUseMains) {
-      src = "Mains";
-      gpioSourceWrite(true, false);
-    } else if (isTankLow()) {
-      src = "Mains";
-      gpioSourceWrite(true, false);
-    } else {
-      src = "Tank";
-      gpioSourceWrite(false, true);
-    }
-  }
-} else {
+  if (!usePcf) {
+    gpioZoneWrite(z, true);   // ON via GPIO
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
     // PCF8574 path unchanged
     pcfOut.digitalWrite(PCH[z], LOW);
-    if (zonesCount == 4) {
-      if (justUseTank) {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      } else if (justUseMains) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else if (isTankLow()) {
-        src = "Mains";
-        pcfOut.digitalWrite(mainsChannel, LOW);
-        pcfOut.digitalWrite(tankChannel,  HIGH);
-      } else {
-        src = "Tank";
-        pcfOut.digitalWrite(mainsChannel, HIGH);
-        pcfOut.digitalWrite(tankChannel,  LOW);
-      }
-    }
+    setWaterSourceRelays(mainsOn, tankOn);
   }
 
   logEvent(z, "MANUAL START", src, false);
 }
 
 void turnOffValveManual(int z) {
-  if (z >= MAX_ZONES) return;
+  if (z < 0 || z >= (int)zonesCount || z >= (int)MAX_ZONES) return;
   if (!zoneActive[z]) return;
 
+  const bool usePcf = useExpanderForZone(z);
+  const char* src="None";
+  bool mainsOn=false, tankOn=false;
+  chooseWaterSource(src, mainsOn, tankOn);
+
   // Turn this zone OFF
-  if (useGpioFallback) {
+  if (!usePcf) {
     // Use configured polarity for GPIO fallback
     gpioZoneWrite(z, false);          // OFF
   } else {
@@ -1860,16 +1967,10 @@ void turnOffValveManual(int z) {
     }
   }
 
-  // If no zones left on and we are in 4-zone (tank/mains) mode, turn both feed relays OFF
-  if (!anyStillOn && zonesCount == 4) {
-    if (useGpioFallback) {
-      // Respect configured polarity for mains/tank
-      gpioSourceWrite(false, false);   // mains OFF, tank OFF
-    } else {
-      // PCF8574: HIGH = OFF on both channels
-      pcfOut.digitalWrite(mainsChannel, HIGH);
-      pcfOut.digitalWrite(tankChannel,  HIGH);
-    }
+  if (anyStillOn) {
+    setWaterSourceRelays(mainsOn, tankOn);
+  } else {
+    setWaterSourceRelays(false, false);   // mains OFF, tank OFF
   }
 }
 
@@ -1995,7 +2096,8 @@ void handleRoot() {
   html += F(".section{padding:var(--pad)}");
   html += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--gap)}");
   html += F(".card{background:var(--card);border:1px solid var(--glass-brd);border-radius:var(--radius);box-shadow:var(--shadow);padding:var(--pad)}");
-  html += F(".card h3{margin:0 0 8px 0;font-size:1.15rem;color:var(--ink);font-weight:800;letter-spacing:.3px}");
+  html += F(".card h3{margin:0 0 10px 0;font-size:1.15rem;color:var(--ink);font-weight:850;letter-spacing:.35px;");
+  html += F("padding-bottom:6px;border-bottom:2px solid var(--primary);display:flex;align-items:center;gap:8px}");
   html += F(".card h4{margin:6px 0 6px 0;font-size:.95rem;color:var(--muted);font-weight:700;letter-spacing:.2px}");
   html += F(".chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border:1px solid var(--chip-brd);border-radius:999px;padding:8px 14px;font-weight:650;white-space:nowrap;font-size:.95rem;color:var(--ink)}");
   html += F(".big{font-weight:800;font-size:1.3rem}.hint{color:var(--muted);font-size:.9rem;margin-top:4px}.sub{color:var(--muted);font-size:.88rem}");
@@ -2037,6 +2139,12 @@ void handleRoot() {
   html += F(".zone-meta-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:.82rem;color:var(--muted)}");
   html += F(".zone-meta-row .pill-soft{padding:4px 10px;border-radius:999px;background:var(--chip);border:1px solid var(--chip-brd)}");
   html += F(".zone-meta-row b{font-weight:700}");
+  html += F("body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}");
+  html += F(".card{transition:transform .12s ease,box-shadow .12s ease}");
+  html += F(".card:hover{transform:translateY(-2px);box-shadow:0 16px 34px rgba(0,0,0,.18)}");
+  html += F(".btn:hover{filter:brightness(1.05)}");
+  html += F(".chip:hover,.pill:hover{filter:brightness(1.02)}");
+  html += F(".btn:focus-visible,.pill:focus-visible,.chip:focus-visible{outline:2px solid var(--primary);outline-offset:2px}");
 
   // Schedules styles (collapsible, mobile-friendly)
   html += F(".sched{margin-top:var(--gap)}");
@@ -2127,16 +2235,16 @@ html += F("</b></a></div>");
   html += F("<div class='grid' style='grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px'>");
   html += F("<div class='chip'><b>Low</b>&nbsp;<b id='tmin'>---</b> C</div>");
   html += F("<div class='chip'><b>High</b>&nbsp;<b id='tmax'>---</b> C</div>");
-  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b></div>");
+  html += F("<div class='chip'><b>Pressure</b>&nbsp;<b id='press'>--</b> hPa</div>");
   html += F("<div class='chip'><span class='sub'>Sunrise</span>&nbsp;<b id='sunr'>--:--</b></div>");
   html += F("<div class='chip'><span class='sub'>Sunset</span>&nbsp;<b id='suns'>--:--</b></div>");
   html += F("</div></div>");
 
   // Delays / status
   html += F("<div class='card'><h3>Delays</h3><div class='grid' style='grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px'>");
-  html += F("<div id='rainBadge' class='badge '"); html += (rainActive ? "b-bad" : "b-ok"); html += F("'>Rain: <b>");
+  html += F("<div id='rainBadge' class='badge "); html += (rainActive ? "b-bad" : "b-ok"); html += F("'>Rain: <b>");
   html += (rainActive?"Active":"Off"); html += F("</b></div>");
-  html += F("<div id='windBadge' class='badge '"); html += (windActive ? "b-warn" : "b-ok"); html += F("'>Wind: <b>");
+  html += F("<div id='windBadge' class='badge "); html += (windActive ? "b-warn" : "b-ok"); html += F("'>Wind: <b>");
   html += (windActive?"Active":"Off"); html += F("</b></div>");
   html += F("<div class='badge'>Cause: <b id='rainCauseBadge'>"); html += causeText; html += F("</b></div>");
   html += F("<div class='badge'>1h (Now): <b id='acc1h'>--</b> mm</div>");
@@ -2346,7 +2454,6 @@ html += F("</b></a></div>");
   html += F("<h3>Tools</h3><div class='toolbar'>");
   html += F("<a class='btn' href='/setup'>Setup</a>");
   html += F("<a class='btn btn-secondary' href='/events'>Events</a>");
-  html += F("<a class='btn btn-secondary' href='/tank'>Calibrate Tank</a>");
   html += F("<a class='btn btn-secondary' href='/status'>Status JSON</a>");
   html += F("</div></div></div>");
 
@@ -2454,7 +2561,7 @@ html += F("</b></a></div>");
   html += F("if(tmax) tmax.textContent=(st.tmax??0).toFixed(0);");
   html += F("if(sunr) sunr.textContent = st.sunriseLocal || '--:--';");
   html += F("if(suns) suns.textContent = st.sunsetLocal  || '--:--';");
-  html += F("if(press) press.textContent = (typeof st.pressure==='number' && st.pressure>0) ? st.pressure : '--';");
+  html += F("if(press){ const p=st.pressure; press.textContent=(typeof p==='number' && p>0)?p.toFixed(0):'--'; }");
 
   // keep master pill synced
   html += F("const bm=document.getElementById('btn-master'); const ms=document.getElementById('master-state');");
@@ -2500,11 +2607,13 @@ void handleSetupPage() {
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
   html += F("<title>Setup - ESP32 Irrigation</title>");
   html += F("<style>");
-  html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px;text-align:left}");
+  html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px}");
   html += F(".wrap{max-width:1100px;margin:28px auto;padding:0 16px}");
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
-  html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:800;letter-spacing:.3px;color:#e8eef6}");
+  html += F(".card.narrow{max-width:960px;margin-left:auto;margin-right:auto}");
+  html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:850;letter-spacing:.35px;color:#f2f6ff;");
+  html += F("padding-bottom:6px;border-bottom:2px solid #1c74d9;display:flex;align-items:center;gap:8px}");
   html += F("label{display:inline-block;min-width:200px;font-size:.95rem;font-weight:600;color:#d6e1f4;text-align:left}");
   // Inputs + select share the same theme
   html += F("input[type=text],input[type=number],select{background:#0b1220;color:#e8eef6;border:1px solid #233357;border-radius:12px;padding:9px 12px;font-size:.95rem;text-align:left}");
@@ -2536,6 +2645,14 @@ void handleSetupPage() {
   html += F(".chip input{margin:0}");
   html += F(".chip span{white-space:nowrap}");
 
+  // Collapsible card styling
+  html += F("details.collapse{padding:0;margin:0}");
+  html += F("details.collapse summary{cursor:pointer;outline:none;list-style:none;font-weight:800;font-size:1.05rem;color:#e8eef6}");
+  html += F("details.collapse summary::-webkit-details-marker{display:none}");
+  html += F("details.collapse summary:after{content:'▸';margin-left:8px;transition:transform .18s ease;display:inline-block}");
+  html += F("details.collapse[open] summary:after{transform:rotate(90deg)}");
+  html += F(".collapse-body{margin-top:10px}");
+
   // Help text row: let the text wrap nicely
   html += F(".helptext label{min-width:0}");
   html += F(".helptext small{max-width:520px;display:block}");
@@ -2544,6 +2661,11 @@ void handleSetupPage() {
   html += F("select{appearance:none;-webkit-appearance:none;-moz-appearance:none;padding-right:32px;");
   html += F("background-image:linear-gradient(45deg,transparent 50%,#9aa6c2 50%),linear-gradient(135deg,#9aa6c2 50%,transparent 50%);");
   html += F("background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}");
+  html += F("body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}");
+  html += F(".card{transition:transform .12s ease,box-shadow .12s ease}");
+  html += F(".card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.22)}");
+  html += F(".btn:hover,.btn-alt:hover{filter:brightness(1.06)}");
+  html += F("input:focus-visible,select:focus-visible{outline:2px solid #1c74d9;outline-offset:2px}");
 
   // Desktop tuning
   html += F("@media(min-width:1024px){");
@@ -2560,16 +2682,20 @@ void handleSetupPage() {
   html += F("<div class='wrap'><h1>Setup</h1><form action='/configure' method='POST'>");
 
   // Weather
-  html += F("<div class='card'><h3>Weather</h3>");
+  html += F("<div class='card narrow'><h3>Weather</h3>");
   html += F("<div class='row'><label>API Key</label><input class='in-wide' type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
   html += F("<div class='row'><label>City ID</label><input class='in-med' type='text' name='city' value='"); html += city; html += F("'><small>OpenWeatherMap city id</small></div>");
   html += F("</div>");
 
   // Zones
-  html += F("<div class='card'><h3>Zones</h3>");
-  html += F("<div class='row switchline'><label>Mode</label>");
-  html += F("<label><input type='radio' name='zonesMode' value='4' "); html += (zonesCount==4?"checked":""); html += F("> 4 Zone + Mains/Tank</label>");
-  html += F("<label><input type='radio' name='zonesMode' value='6' "); html += (zonesCount==6?"checked":""); html += F("> 6 Zone</label></div>");
+  html += F("<div class='card narrow'><h3>Zones</h3>");
+  html += F("<div class='row'><label>Zone Count</label><input class='in-xs' type='number' min='1' max='");
+  html += String(MAX_ZONES);
+  html += F("' name='zonesMode' value='");
+  html += String(zonesCount);
+  html += F("'><small>Tank/Mains works with any zone count. Up to ");
+  html += String(MAX_ZONES);
+  html += F(" zones supported.</small></div>");
 
   // Run mode
   html += F("<div class='row switchline'><label>Run Mode</label>");
@@ -2577,17 +2703,13 @@ void handleSetupPage() {
   html += F("> Run Zones Together</label><small>Unchecked = One at a time</small></div>");
   html += F("</div>");
 
-  // Physical rain & forecast
-  html += F("<div class='card'><h3>Rain Sources</h3>");
-  html += F("<div class='row switchline'><label>Disable OWM Rain</label><input type='checkbox' name='rainForecastDisabled' ");
-  html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore OpenWeatherMap rain</small></div>");
-  html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
-  html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
-  html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
-  html += F("</div>");
+  // Tank (available for all modes; water source switching works with any zone count)
+  html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
+  html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
+  html += (tankEnabled ? "checked" : "");
+  html += F("><small>Unchecked = ignore tank level and force mains</small></div>");
+  html += F("<div id='tankCard'>");
 
-  // Tank & Water Source
-  html += F("<div class='card'><h3>Tank & Water Source</h3>");
   html += F("<div class='row switchline'><label>Water Source</label>");
 
   // Auto
@@ -2605,21 +2727,41 @@ void handleSetupPage() {
   if (justUseMains) html += F("checked");
   html += F("> Only Mains</label>");
 
-  html += F("<small>(4-zone Tank/Mains mode only)</small></div>");
+  html += F("<small>");
+  html += "Tank/mains switching works with any zone count";
+  html += F("</small></div>");
 
   html += F("<div class='row'><label>Tank Low Threshold (%)</label>"
             "<input class='in-xs' type='number' min='0' max='100' name='tankThresh' value='");
   html += String(tankLowThresholdPct);
-  html += F("'><small>Switch to mains if tank below this level</small></div>");
+  html += F("'><small>Switch to mains if tank drops below this level</small></div>");
 
-  html += F("<div class='row'><label>Tank Sensor GPIO</label>"
-            "<input class='in-xs' type='number' min='0' max='39' name='tankSensorPin' value='");
-  html += String(tankSensorPin);
-  html += F("'><small>ADC pin, e.g. 36 (GPIO36)</small></div>");
+  html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='1' max='20' name='tankLevelPin' value='");
+  html += String(tankLevelPin); html += F("'><small>ADC pin (ESP32-S3: GPIO1-20)</small></div>");
+  html += F("<div class='row'><label></label><a class='btn-alt' href='/tank'>Calibrate Tank</a></div>");
+  html += F("</div>"); // end tankCard
   html += F("</div>");
 
+  // Physical rain & forecast
+  html += F("<div class='card narrow'><h3>Rain Sources</h3>");
+  html += F("<div class='row switchline'><label>Disable OWM Rain</label><input type='checkbox' name='rainForecastDisabled' ");
+  html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore OpenWeatherMap rain</small></div>");
+  html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
+  html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
+  html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
+  html += F("</div>");
+  html += F("</div>");
+
+      // Actions
+  html += F("<div class='card narrow'><h3>Actions</h3>");
+  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
+  html += F("<button class='btn-alt' type='button' onclick=\"fetch('/clear_cooldown',{method:'POST'})\">Clear Cooldown</button>");
+  html += F("</div></div>");
+
   // Delays & Pause + thresholds
-  html += F("<div class='card'><h3>Delays & Pause</h3>");
+  html += F("<div class='card narrow'><h3>Delays & Pause</h3>");
   html += F("<div class='cols2'>");
 
   // Left column: toggles
@@ -2634,8 +2776,16 @@ void handleSetupPage() {
   html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
   html += F("<button class='btn' type='button' id='btn-pause-24'>Pause 24h</button>");
   html += F("<button class='btn' type='button' id='btn-pause-7d'>Pause 7d</button>");
-  html += F("<button class='btn' type='button' id='btn-resume'>Resume</button>");
+  html += F("<button class='btn' type='button' id='btn-resume'>Unpause</button>");
+  html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
+  time_t nowEp = time(nullptr);
+    {
+    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
+    html += String(remain/3600);
+  }
+  html += F("'></div>");
   html += F("</div>");
+  html += F("<div class='row'><label>LCD Brightness (%)</label><input class='in-xs' type='number' id='tftLevel' min='0' max='100' value='100'><button class='btn' type='button' id='btn-tft-bright'>Set</button></div>");
   html += F("</div>");
 
   // Right column: numeric thresholds / timers
@@ -2649,40 +2799,25 @@ void handleSetupPage() {
   html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
   html += String(rainThreshold24h_mm);
   html += F("'><small>Delay if >= threshold (24h total)</small></div>");
-  html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
-  time_t nowEp = time(nullptr);
-  {
-    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
-    html += String(remain/3600);
-  }
-  html += F("'><small>0 = until manually resumed</small></div>");
   html += F("</div>");
 
   html += F("</div>"); // end cols2
-
   html += F("</div>"); // end Delays card
 
-  // Actions
-  html += F("<div class='card'><h3>Actions</h3>");
-  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
-  html += F("<button class='btn' type='submit'>Save</button>");
-  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
-  html += F("<button class='btn-alt' type='button' onclick=\"fetch('/clear_cooldown',{method:'POST'})\">Clear Cooldown</button>");
-  html += F("<button class='btn-alt' formaction='/configure' formmethod='POST' name='resumeNow' value='1'>Resume Now</button>");
-  html += F("<button class='btn-alt' type='button' id='btn-toggle-backlight'>Toggle LCD</button>");
-  html += F("</div></div>");
-
   // GPIO fallback pins
-  html += F("<div class='card'><h3>GPIO Fallback (if I2C relays not found)</h3><div class='grid'>");
+  html += F("<div class='card narrow'><details class='collapse' ");
+  html += (useGpioFallback ? "open" : "");
+  html += F("><summary>GPIO Fallback (if I2C relays not found)</summary><div class='collapse-body'><div class='grid'>");
   for (uint8_t i=0;i<MAX_ZONES;i++){
-  html += F("<div class='row'><label>Zone "); html += String(i+1);
-  html += F(" Pin</label><input class='in-xs' type='number' min='0' max='39' name='zonePin"); html += String(i);
+    html += F("<div class='row'><label>Zone "); html += String(i+1);
+    html += F(" Pin</label><input class='in-xs' type='number' min='-1' max='39' name='zonePin"); html += String(i);
     html += F("' value='"); html += String(zonePins[i]); html += F("'></div>");
   }
+  html += F("<div class='row'><label></label><small>Use -1 to leave a zone unassigned. Zones above the 6 PCF channels use GPIO pins when set.</small></div>");
   html += F("<div class='row'><label>Main Pin</label><input class='in-xs' type='number' min='0' max='39' name='mainsPin' value='");
-  html += String(mainsPin); html += F("'><small>4-zone fallback</small></div>");
-  html += F("<div class='row'><label>Tank Pin</label><input class='in-xs' type='number' min='0' max='39' name='tankPin' value='");
-  html += String(tankPin); html += F("'><small>4-zone fallback</small></div>");
+  html += String(mainsPin); html += F("'><small>GPIO relay for mains (used when GPIO mode or >4 zones)</small></div>");
+  html += F("<div class='row'><label>Tank Relay Pin</label><input class='in-xs' type='number' min='0' max='39' name='tankPin' value='");
+  html += String(tankPin); html += F("'><small>GPIO relay for tank (used when GPIO mode or >4 zones)</small></div>");
 
   // NEW: GPIO active polarity
   html += F("<div class='row switchline'><label>GPIO Active Low</label>");
@@ -2691,10 +2826,14 @@ void handleSetupPage() {
   html += F(">");
   html += F("<small>Checked = LOW = ON (active-low relay modules). Unchecked = HIGH = ON.</small></div>");
 
-  html += F("</div></div>");
+  html += F("</div>");
+  html += F("<div class='row' style='justify-content:flex-end;gap:8px'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("</div>");
+  html += F("</div></details></div>");
 
   // Manual buttons
-  html += F("<div class='card'><h3>Manual Buttons</h3>");
+  html += F("<div class='card narrow'><h3>Manual Buttons</h3>");
   html += F("<div class='row switchline'><label>Select Button Pin</label><input class='in-xs' type='number' min='-1' max='39' name='manualSelectPin' value='");
   html += String(manualSelectPin);
   html += F("'><small>-1 to disable. Uses INPUT_PULLUP; press = LOW.</small></div>");
@@ -2706,9 +2845,8 @@ void handleSetupPage() {
   html += F(" (cycles with Select button)</div></div>");
   html += F("</div>");
 
-
   // Timezone
-  html += F("<div class='card'><h3>Timezone</h3>");
+  html += F("<div class='card narrow'><h3>Timezone</h3>");
 
   // Mode selector - cleaner row, better labels
   html += F("<div class='row switchline'>");
@@ -2761,7 +2899,7 @@ void handleSetupPage() {
   html += F("</div>"); // end Timezone card
 
   // MQTT
-  html += F("<div class='card'><h3>MQTT (Home Assistant)</h3>");
+  html += F("<div class='card narrow'><h3>MQTT (Home Assistant)</h3>");
   html += F("<div class='row switchline'><label>Enable MQTT</label><input type='checkbox' name='mqttEnabled' "); html += (mqttEnabled ? "checked" : ""); html += F("></div>");
   html += F("<div class='row'><label>Broker Host</label><input class='in-wide' type='text' name='mqttBroker' value='"); html += mqttBroker; html += F("'></div>");
   html += F("<div class='row'><label>Port</label><input class='in-xs' type='number' name='mqttPort' value='"); html += String(mqttPort); html += F("'></div>");
@@ -2787,6 +2925,7 @@ void handleSetupPage() {
   html += F("g('btn-pause-24')?.addEventListener('click',()=>post('/pause','sec=86400'));");
   html += F("g('btn-pause-7d')?.addEventListener('click',()=>post('/pause','sec='+(7*86400)));");
   html += F("g('btn-resume')?.addEventListener('click',()=>post('/resume','x=1'));");
+  html += F("g('btn-tft-bright')?.addEventListener('click',async()=>{const v=g('tftLevel'); if(!v) return; let n=parseInt(v.value||'100'); if(isNaN(n)) n=100; n=Math.min(100,Math.max(0,n)); v.value=n; try{await post('/tft_brightness','level='+n);}catch(e){console.error(e)}});");
 
   // === Timezone loading from Nayarsystems posix_tz_db with fallback ===
   html += F("const TZ_DB_URL='https://raw.githubusercontent.com/nayarsystems/posix_tz_db/master/zones.json';");
@@ -2840,6 +2979,8 @@ void handleSetupPage() {
   html += F("   if(tzPosixInput && zones[val]) tzPosixInput.value=zones[val];");
   html += F(" });");
   html += F("}"); // end buildTzOptions
+
+  // Tank card always shown now (no toggle)
 
   html += F("async function loadTimezones(){");
   html += F(" if(!tzSel||!tzInput) return;");
@@ -3010,7 +3151,7 @@ void handleLogPage() {
 // ---------- Tank Calibration Page ----------
 void handleTankCalibration() {
   HttpScope _scope;
-  int raw=analogRead(tankSensorPin);
+  int raw = isValidAdcPin(tankLevelPin) ? analogRead(tankLevelPin) : -1;
   int pct=tankPercent();
 
   String html; html.reserve(2000);
@@ -3029,7 +3170,11 @@ void handleTankCalibration() {
 
   html += F("<p>Raw: <b>"); html += String(raw); html += F("</b></p>");
   html += F("<p>Calibrated range: <b>"); html += String(tankEmptyRaw); html += F("</b> to <b>"); html += String(tankFullRaw); html += F("</b></p>");
-  html += F("<p>Level: <b>"); html += String(pct); html += F("%</b></p>");
+  if (!isValidAdcPin(tankLevelPin)) {
+    html += F("<p style='color:#f59e0b'>Invalid ADC pin. Set tank sensor GPIO to 1-20 (ESP32-S3) in Setup.</p>");
+  } else {
+    html += F("<p>Level: <b>"); html += String(pct); html += F("%</b></p>");
+  }
   html += F("<div class='row'><form method='POST' action='/setTankEmpty'><button class='btn' type='submit'>Set Empty</button></form>");
   html += F("<form method='POST' action='/setTankFull'><button class='btn' type='submit'>Set Full</button></form></div>");
   html += F("<p><a href='/'>Home</a> | <a href='/setup'>Setup</a></p></div></div>");
@@ -3075,10 +3220,11 @@ void loadConfig() {
   if ((s = _safeReadLine(f)).length()) tankEmptyRaw         = s.toInt();
   if ((s = _safeReadLine(f)).length()) tankFullRaw          = s.toInt();
   if ((s = _safeReadLine(f)).length()) {
-    uint8_t z = s.toInt();
-    zonesCount = (z == 6 ? 6 : 4);
+    int z = s.toInt();
+    if (z < 1) z = 1;
+    if (z > (int)MAX_ZONES) z = MAX_ZONES;
+    zonesCount = (uint8_t)z;
   }
-
   if ((s = _safeReadLine(f)).length()) rainSensorEnabled = (s.toInt() == 1);
   if ((s = _safeReadLine(f)).length()) rainSensorPin     = s.toInt();
   if ((s = _safeReadLine(f)).length()) rainSensorInvert  = (s.toInt() == 1);
@@ -3086,13 +3232,23 @@ void loadConfig() {
     int th = s.toInt();
     if (th >= 0 && th <= 100) tankLowThresholdPct = th;
   }
+  if ((s = _safeReadLine(f)).length()) tankEnabled = (s.toInt() == 1);
 
   // GPIO fallback pins
   for (int i = 0; i < MAX_ZONES; i++) {
-    if ((s = _safeReadLine(f)).length()) zonePins[i] = s.toInt();
+    if ((s = _safeReadLine(f)).length()) {
+      int p = s.toInt();
+      if (p >= -1 && p <= 39) zonePins[i] = p;
+    }
   }
-  if ((s = _safeReadLine(f)).length()) mainsPin = s.toInt();
-  if ((s = _safeReadLine(f)).length()) tankPin  = s.toInt();
+  if ((s = _safeReadLine(f)).length()) {
+    int p = s.toInt();
+    if (p >= 0 && p <= 39) mainsPin = p;
+  }
+  if ((s = _safeReadLine(f)).length()) {
+    int p = s.toInt();
+    if (p >= 0 && p <= 39) tankPin  = p;
+  }
   if (f.available()) {
     if ((s = _safeReadLine(f)).length()) {
       int p = s.toInt();
@@ -3136,16 +3292,24 @@ void loadConfig() {
   if (f.available()) { if ((s = _safeReadLine(f)).length()) mqttPass    = s; }
   if (f.available()) { if ((s = _safeReadLine(f)).length()) mqttBase    = s; }
 
-  // NEW: relay polarity (optional trailing line, backwards compatible)
+  // ? NEW: relay polarity (optional trailing line, backwards compatible)
   if (f.available()) { 
     if ((s = _safeReadLine(f)).length()) 
       relayActiveHigh = (s.toInt() == 1);
   }
+
+  // NEW: persisted GPIO polarity for fallback mode
   if (f.available()) {
-    if ((s = _safeReadLine(f)).length()) {
-      int p = s.toInt();
-      if (p >= 0 && p <= 39) tankSensorPin = p;
-    }
+    if ((s = _safeReadLine(f)).length())
+      gpioActiveLow = (s.toInt() == 1);
+  }
+
+  // NEW: tank level sensor pin (ADC)
+  if (f.available()) {
+  if ((s = _safeReadLine(f)).length()) {
+    int p = s.toInt();
+    if (isValidAdcPin(p)) tankLevelPin = p;
+  }
   }
 
   f.close();
@@ -3158,6 +3322,9 @@ void loadConfig() {
 void saveConfig() {
   File f = LittleFS.open("/config.txt", "w");
   if (!f) return;
+
+  if (zonesCount < 1) zonesCount = 1;
+  if (zonesCount > MAX_ZONES) zonesCount = MAX_ZONES;
 
   // Core / legacy order
   f.println(apiKey);
@@ -3176,8 +3343,9 @@ void saveConfig() {
   f.println(rainSensorPin);
   f.println(rainSensorInvert ? 1 : 0);
   f.println(tankLowThresholdPct);
+  f.println(tankEnabled ? 1 : 0);
 
-  // NOTE: keep this line commented out (it breaks the alignment).
+  // ? REMOVE this line from here (it breaks the alignment!)
   // f.println(relayActiveHigh ? 1 : 0);
 
   for (int i = 0; i < MAX_ZONES; i++) f.println(zonePins[i]);
@@ -3216,9 +3384,12 @@ void saveConfig() {
   f.println(mqttPass);
   f.println(mqttBase);
 
-  // NEW: relay polarity written as trailing line to match loadConfig()
+  // ? NEW: relay polarity written as trailing line to match loadConfig()
   f.println(relayActiveHigh ? 1 : 0);
-  f.println(tankSensorPin);
+  // NEW: persist GPIO polarity for fallback mode
+  f.println(gpioActiveLow ? 1 : 0);
+  // NEW: tank level sensor pin (ADC)
+  f.println(tankLevelPin);
 
   f.close();
 }
@@ -3273,7 +3444,6 @@ void saveSchedule() {
   f.close();
 }
 
-// ---------- Configure (POST) ----------
 void handleConfigure() {
   HttpScope _scope;
 
@@ -3285,12 +3455,13 @@ void handleConfigure() {
   if (server.hasArg("apiKey")) apiKey = server.arg("apiKey");
   if (server.hasArg("city"))   city   = server.arg("city");
 
-  // Zones mode (4 + tank/mains OR 6-zone)
+  // Zones mode (1..MAX_ZONES, 4 keeps tank/mains behaviour)
   if (server.hasArg("zonesMode")) {
-    String zm = server.arg("zonesMode");
-    zonesCount = (zm == "6") ? 6 : 4;
+    int z = server.arg("zonesMode").toInt();
+    if (z < 1) z = 1;
+    if (z > (int)MAX_ZONES) z = MAX_ZONES;
+    zonesCount = (uint8_t)z;
   }
-  if (manualSelectedZone >= zonesCount) manualSelectedZone = 0;
 
   // Run mode (sequential vs concurrent)
   runZonesConcurrent = server.hasArg("runConcurrent");
@@ -3316,7 +3487,7 @@ void handleConfigure() {
     if (windSpeedThreshold < 0) windSpeedThreshold = 0;
   }
 
-  // Rain cooldown (hours -> minutes + uint8)
+  // Rain cooldown (hours ? minutes + uint8)
   if (server.hasArg("rainCooldownHours")) {
     int h = server.arg("rainCooldownHours").toInt();
     if (h < 0) h = 0;
@@ -3350,7 +3521,7 @@ void handleConfigure() {
         pauseUntilEpoch = 0;
       }
     } else {
-      // Checkbox not ticked -> clear pause
+      // Checkbox not ticked ? clear pause
       systemPaused    = false;
       pauseUntilEpoch = 0;
     }
@@ -3378,17 +3549,14 @@ void handleConfigure() {
     if (th > 100) th = 100;
     tankLowThresholdPct = th;
   }
-  if (server.hasArg("tankSensorPin")) {
-    int p = server.arg("tankSensorPin").toInt();
-    if (p >= 0 && p <= 39) tankSensorPin = p;
-  }
+  tankEnabled = server.hasArg("tankEnabled");
 
   // GPIO fallback pins
   for (int i = 0; i < MAX_ZONES; i++) {
     String key = "zonePin" + String(i);
     if (server.hasArg(key)) {
       int p = server.arg(key).toInt();
-      if (p >= 0 && p <= 39) zonePins[i] = p;
+      if (p >= -1 && p <= 39) zonePins[i] = p;
     }
   }
   if (server.hasArg("mainsPin")) {
@@ -3398,6 +3566,10 @@ void handleConfigure() {
   if (server.hasArg("tankPin")) {
     int p = server.arg("tankPin").toInt();
     if (p >= 0 && p <= 39) tankPin = p;
+  }
+  if (server.hasArg("tankLevelPin")) {
+    int p = server.arg("tankLevelPin").toInt();
+    if (isValidAdcPin(p)) tankLevelPin = p;
   }
   if (server.hasArg("manualSelectPin")) {
     int p = server.arg("manualSelectPin").toInt();
@@ -3443,7 +3615,7 @@ void handleConfigure() {
   // Persist and re-apply runtime things
   saveConfig();
   initManualButtons();
-
+    
     // --- NEW: if API key or City ID changed, force a weather refresh ---
   if (apiKey != oldApiKey || city != oldCity) {
     // Clear current / forecast caches and timers
@@ -3485,4 +3657,5 @@ void handleClearEvents() {
   server.sendHeader("Location", "/events", true);
   server.send(302, "text/plain", "");
 }
+
 
