@@ -37,8 +37,8 @@ extern "C" {
 // ---------- Hardware ----------
 static const uint8_t MAX_ZONES = 16;
 
-constexpr uint8_t I2C_SDA = 4;   //8 for s3
-constexpr uint8_t I2C_SCL = 15;  //9 for s3
+constexpr uint8_t I2C_SDA = 8;   //8 for s3
+constexpr uint8_t I2C_SCL = 9;  //9 for s3
  
 #ifndef STATUS_PIXEL_PIN
 #define STATUS_PIXEL_PIN 48   // WS2812 status LED
@@ -142,6 +142,7 @@ bool days[MAX_ZONES][7] = {{false}};
 bool zoneActive[MAX_ZONES] = {false};
 bool pendingStart[MAX_ZONES] = {false};
 int  windQueuedZone = -1;  // most recent scheduled zone delayed by wind
+uint8_t lastStartSlot[MAX_ZONES] = {1}; // 1=primary, 2=secondary
 
 bool     windActive = false;
 bool     rainActive             = false;
@@ -163,6 +164,8 @@ int startHour2[MAX_ZONES] = {0};
 int startMin2 [MAX_ZONES] = {0};
 int durationMin[MAX_ZONES] = {0};
 int durationSec[MAX_ZONES] = {0};
+int duration2Min[MAX_ZONES] = {0};
+int duration2Sec[MAX_ZONES] = {0};
 int lastCheckedMinute[MAX_ZONES] = {
   -1,-1,-1,-1,-1,-1,-1,-1,
   -1,-1,-1,-1,-1,-1,-1,-1
@@ -177,6 +180,7 @@ String zoneNames[MAX_ZONES] = {
 };
 
 unsigned long zoneStartMs[MAX_ZONES] = {0};
+unsigned long zoneRunTotalSec[MAX_ZONES] = {0}; // actual duration for the current run
 unsigned long lastScreenRefresh = 0;
 
 const uint8_t expanderAddrs[] = { 0x22, 0x24 };
@@ -624,7 +628,24 @@ inline void setWaterSourceRelays(bool mainsOn, bool tankOn) {
 }
 
 inline bool useExpanderForZone(int z) {
-  return (!useGpioFallback && z >= 0 && z < (int)ALL_P);
+  if (useGpioFallback) return false;
+  if (z < 0 || z >= (int)ALL_P) return false;
+  if (PCH[z] == mainsChannel || PCH[z] == tankChannel) return false;
+  return true;
+}
+
+// Duration helper: slot=1 (primary) or 2 (secondary) with fallback to primary
+static inline unsigned long durationForSlot(int z, int slot) {
+  if (z < 0 || z >= (int)MAX_ZONES) return 0;
+  if (slot == 2 && enableStartTime2[z]) {
+    unsigned long m = (duration2Min[z] >= 0) ? (unsigned long)duration2Min[z] : 0;
+    unsigned long s = (duration2Sec[z] >= 0) ? (unsigned long)duration2Sec[z] : 0;
+    unsigned long tot = m * 60UL + s;
+    if (tot > 0) return tot;
+  }
+  unsigned long m = (durationMin[z] >= 0) ? (unsigned long)durationMin[z] : 0;
+  unsigned long s = (durationSec[z] >= 0) ? (unsigned long)durationSec[z] : 0;
+  return m * 60UL + s;
 }
 
 
@@ -861,13 +882,14 @@ void setup() {
       z["active"] = zoneActive[i];
       z["name"]   = zoneNames[i];
       unsigned long rem = 0;
+      unsigned long total = zoneRunTotalSec[i];
+      if (total == 0) total = durationForSlot(i,1);
       if (zoneActive[i]) {
         unsigned long elapsed = (millis() - zoneStartMs[i]) / 1000;
-        unsigned long total   = (unsigned long)durationMin[i] * 60 + durationSec[i];
         rem = (elapsed < total ? total - elapsed : 0);
       }
       z["remaining"] = rem;
-      z["totalSec"]  = (unsigned long)durationMin[i] * 60 + durationSec[i];
+      z["totalSec"]  = total;
     }
 
     // Current weather pass-through (no fetch, just decode cache)
@@ -1706,7 +1728,8 @@ void updateLCDForZone(int zone) {
   if (now - lastUpdate < 1000) return; lastUpdate = now;
 
   unsigned long elapsed=(now - zoneStartMs[zone]) / 1000;
-  unsigned long total=(unsigned long)durationMin[zone]*60 + (unsigned long)durationSec[zone];
+  unsigned long total=zoneRunTotalSec[zone];
+  if (total==0) total = durationForSlot(zone,1);
   unsigned long rem = (elapsed<total ? total - elapsed : 0);
 
   display.clearDisplay();
@@ -1762,23 +1785,25 @@ void HomeScreen() {
   for (int i=0;i<i_min(2,(int)zonesCount);i++){
     int x=(i==0)?0:64;
     display.setCursor(x,44);
-    if (zoneActive[i]) {
-      unsigned long elapsed=(millis()-zoneStartMs[i])/1000;
-      unsigned long total=(unsigned long)durationMin[i]*60 + durationSec[i];
-      unsigned long rem=(elapsed<total?total-elapsed:0);
-      display.printf("Z%d:%02d:%02d", i+1, (int)(rem/60),(int)(rem%60));
-    } else display.printf("Z%d:Off", i+1);
-  }
-  for (int i=2;i<i_min(4,(int)zonesCount);i++){
-    int x=(i==2)?0:64;
-    display.setCursor(x,56);
-    if (zoneActive[i]) {
-      unsigned long elapsed=(millis()-zoneStartMs[i])/1000;
-      unsigned long total=(unsigned long)durationMin[i]*60 + durationSec[i];
-      unsigned long rem=(elapsed<total?total-elapsed:0);
-      display.printf("Z%d:%02d:%02d", i+1, (int)(rem/60),(int)(rem%60));
-    } else display.printf("Z%d:Off", i+1);
-  }
+  if (zoneActive[i]) {
+    unsigned long elapsed=(millis()-zoneStartMs[i])/1000;
+    unsigned long total=zoneRunTotalSec[i];
+    if (total==0) total = durationForSlot(i,1);
+    unsigned long rem=(elapsed<total?total-elapsed:0);
+    display.printf("Z%d:%02d:%02d", i+1, (int)(rem/60),(int)(rem%60));
+  } else display.printf("Z%d:Off", i+1);
+}
+for (int i=2;i<i_min(4,(int)zonesCount);i++){
+  int x=(i==2)?0:64;
+  display.setCursor(x,56);
+  if (zoneActive[i]) {
+    unsigned long elapsed=(millis()-zoneStartMs[i])/1000;
+    unsigned long total=zoneRunTotalSec[i];
+    if (total==0) total = durationForSlot(i,1);
+    unsigned long rem=(elapsed<total?total-elapsed:0);
+    display.printf("Z%d:%02d:%02d", i+1, (int)(rem/60),(int)(rem%60));
+  } else display.printf("Z%d:Off", i+1);
+}
   display.display();
 }
 
@@ -1795,18 +1820,25 @@ bool shouldStartZone(int zone) {
 
   if (lastCheckedMinute[zone] == mn) return false;      // avoid dup triggers
   if (!days[zone][wd]) return false;                    // day not enabled
-  if (durationMin[zone] == 0 && durationSec[zone] == 0) return false; // zero duration
+  // zero duration guard
+  if (durationMin[zone] == 0 && durationSec[zone] == 0 && duration2Min[zone]==0 && duration2Sec[zone]==0) return false;
 
   const bool match1 = (hr == startHour[zone]  && mn == startMin[zone]);
   const bool match2 = (enableStartTime2[zone] && hr == startHour2[zone] && mn == startMin2[zone]);
 
-  if (match1 || match2) { lastCheckedMinute[zone] = mn; return true; }
+  if (match1 || match2) { 
+    lastCheckedMinute[zone] = mn; 
+    lastStartSlot[zone] = match2 ? 2 : 1;
+    if (durationForSlot(zone,lastStartSlot[zone]) == 0) return false;
+    return true; 
+  }
   return false;
 }
 
 bool hasDurationCompleted(int zone) {
   unsigned long elapsed=(millis()-zoneStartMs[zone])/1000;
-  unsigned long total=(unsigned long)durationMin[zone]*60 + (unsigned long)durationSec[zone];
+  unsigned long total=zoneRunTotalSec[zone];
+  if (total==0) total = durationForSlot(zone,1);
   return (elapsed >= total);
 }
 
@@ -1843,6 +1875,9 @@ void turnOnZone(int z) {
 
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
+  unsigned long total = durationForSlot(z, lastStartSlot[z]);
+  if (total == 0) total = durationForSlot(z, 1);
+  zoneRunTotalSec[z] = total;
 
   const char* src = "None";
   bool mainsOn=false, tankOn=false;
@@ -1892,6 +1927,7 @@ void turnOffZone(int z) {
   }
 
   zoneActive[z] = false;
+  zoneRunTotalSec[z] = 0;
 
   bool anyStillOn = false;
   for (int i = 0; i < (int)zonesCount; i++) {
@@ -1944,6 +1980,8 @@ void turnOnValveManual(int z) {
 
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
+  lastStartSlot[z] = 1;
+  zoneRunTotalSec[z] = durationForSlot(z,1);
   const char* src = "None";
   bool mainsOn=false, tankOn=false;
   chooseWaterSource(src, mainsOn, tankOn);
@@ -1979,6 +2017,7 @@ void turnOffValveManual(int z) {
   }
 
   zoneActive[z] = false;
+  zoneRunTotalSec[z] = 0;
 
   bool anyStillOn = false;
   for (int i = 0; i < (int)zonesCount; i++) {
@@ -2003,7 +2042,7 @@ static NextWaterInfo computeNextWatering() {
     if (pendingStart[z]) {
       best.epoch = time(nullptr);
       best.zone  = z;
-      best.durSec = (uint32_t)durationMin[z]*60u + (uint32_t)durationSec[z];
+      best.durSec = (uint32_t)durationForSlot(z, lastStartSlot[z]);
       return best;
     }
   }
@@ -2011,9 +2050,10 @@ static NextWaterInfo computeNextWatering() {
   time_t now = time(nullptr);
   struct tm base; localtime_r(&now, &base);
 
-  auto consider = [&](int z, int hr, int mn, bool enabled) {
+  auto consider = [&](int z, int hr, int mn, bool enabled, int slot) {
     if (!enabled) return;
-    if (durationMin[z] == 0 && durationSec[z] == 0) return;
+    unsigned long tot = durationForSlot(z, slot);
+    if (tot == 0) return;
 
     struct tm cand = base;
     cand.tm_sec  = 0;
@@ -2030,7 +2070,7 @@ static NextWaterInfo computeNextWatering() {
         if (best.zone < 0 || t < best.epoch) {
           best.epoch = t;
           best.zone  = z;
-          best.durSec = (uint32_t)durationMin[z]*60u + (uint32_t)durationSec[z];
+          best.durSec = (uint32_t)tot;
         }
         return;
       }
@@ -2039,8 +2079,8 @@ static NextWaterInfo computeNextWatering() {
   };
 
   for (int z=0; z<(int)zonesCount; ++z) {
-    consider(z, startHour[z],  startMin[z],  true);
-    consider(z, startHour2[z], startMin2[z], enableStartTime2[z]);
+    consider(z, startHour[z],  startMin[z],  true, 1);
+    consider(z, startHour2[z], startMin2[z], enableStartTime2[z], 2);
   }
   return best;
 }
@@ -2340,6 +2380,17 @@ html += F("</b></a></div>");
     html += F("' value='"); html += String(durationSec[z]); html += F("'>");
     html += F("<span class='unit'>s</span></div></div>");
 
+    // Duration 2 (used when Start 2 fires)
+    html += F("<div class='rowx dur2row' id='dur2row"); html += String(z); html += F("' style='display:");
+    html += (enableStartTime2[z] ? "grid" : "none");
+    html += F("'><label>Duration 2</label><div class='field inline'>");
+    html += F("<input class='in' type='number' min='0' max='600' name='duration2Min"); html += String(z);
+    html += F("' value='"); html += String(duration2Min[z]); html += F("'>");
+    html += F("<span class='unit'>m</span><span class='sep'>:</span>");
+    html += F("<input class='in' type='number' min='0' max='59' name='duration2Sec"); html += String(z);
+    html += F("' value='"); html += String(duration2Sec[z]); html += F("'>");
+    html += F("<span class='unit'>s</span><small class='sub'>Used only for Start 2</small></div></div>");
+
     // Days
     html += F("<div class='rowx'><label>Days</label><div class='days-grid'>");
     for (int d=0; d<7; ++d) {
@@ -2447,6 +2498,17 @@ html += F("</b></a></div>");
       if (durS < 10) html += F("0");
       html += String(durS);
       html += F("s</b></span>");
+      if (enableStartTime2[z]) {
+        unsigned long d2 = (unsigned long)duration2Min[z]*60UL + (unsigned long)duration2Sec[z];
+        unsigned int d2m = d2 / 60;
+        unsigned int d2s = d2 % 60;
+        html += F("<span class='pill-soft'><span>Duration 2&nbsp;</span><b>");
+        html += String(d2m);
+        html += F("m ");
+        if (d2s < 10) html += F("0");
+        html += String(d2s);
+        html += F("s</b></span>");
+      }
     html += F("</div>");
 
     // Actions
@@ -2612,13 +2674,21 @@ html += F("</b></a></div>");
   html += F("  for(let z=0; z<ZC; z++){");
   html += F("    const q=n=>document.querySelector(`[name='${n}']`);");
   html += F("    const add=(k)=>{const el=q(k); if(el){ if((el.type||'').toLowerCase()==='checkbox'){ if(el.checked) fd.append(k,'on'); } else { fd.append(k,el.value); } } };");
-  html += F("    add('zoneName'+z); add('startHour'+z); add('startMin'+z); add('startHour2'+z); add('startMin2'+z); add('durationMin'+z); add('durationSec'+z);");
+  html += F("    add('zoneName'+z); add('startHour'+z); add('startMin'+z); add('startHour2'+z); add('startMin2'+z); add('durationMin'+z); add('durationSec'+z); add('duration2Min'+z); add('duration2Sec'+z);");
   html += F("    add('enableStartTime2'+z);");
   html += F("    for(let d=0; d<7; d++) add('day'+z+'_'+d);");
   html += F("  }");
   html += F("  try{ await fetch('/submit',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:fd.toString()}); location.reload(); }catch(e){ console.error(e); }");
   html += F("} ");
   html += F("document.getElementById('btn-save-all')?.addEventListener('click', saveAll);");
+  // Toggle Duration 2 rows when Start 2 is enabled
+  html += F("for(let z=0; z<ZC; z++){");
+  html += F("  const cb=document.querySelector(`[name='enableStartTime2${z}']`);");
+  html += F("  const row=document.getElementById('dur2row'+z);");
+  html += F("  if(!cb||!row) continue;");
+  html += F("  const sync=()=>{row.style.display=cb.checked?'grid':'none';};");
+  html += F("  cb.addEventListener('change', sync); sync();");
+  html += F("}");
 
   html += F("</script></body></html>");
 
@@ -3055,6 +3125,8 @@ void handleSubmit() {
       if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
       if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
       if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
+      if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
+      if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
       enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
       // Days
       for (int d=0; d<7; d++) days[z][d] = server.hasArg("day"+String(z)+"_"+String(d));
@@ -3078,6 +3150,8 @@ void handleSubmit() {
     if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
     if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
     if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
+    if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
+    if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
     enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
   }
   saveSchedule(); saveConfig();
@@ -3428,27 +3502,30 @@ void loadSchedule() {
   for (int i=0; i<MAX_ZONES; i++) {
     String line=f.readStringUntil('\n'); line.trim(); if (!line.length()) continue;
 
-    int idx=0;
-    auto next=[&](int& outIdx){
-      int nidx=line.indexOf(',',idx); if (nidx<0) nidx=line.length();
-      String sv=line.substring(idx,nidx); sv.trim(); outIdx=nidx;
-      int v = sv.toInt(); idx=nidx+1; return v;
-    };
-
-    int tmp;
-    startHour[i]   = next(tmp);
-    startMin[i]    = next(tmp);
-    startHour2[i]  = next(tmp);
-    startMin2[i]   = next(tmp);
-    durationMin[i] = next(tmp);
-    durationSec[i] = next(tmp);
-    enableStartTime2[i] = (next(tmp)==1);
-
-    for (int d=0; d<7; d++) {
-      int nidx=line.indexOf(',',idx); if (nidx<0) nidx=line.length();
+    int idx=0; int tcount=0; int tokens[32];
+    while (idx < (int)line.length() && tcount < 32) {
+      int nidx=line.indexOf(',', idx); if (nidx<0) nidx=line.length();
       String sv=line.substring(idx,nidx); sv.trim();
-      days[i][d] = (sv.toInt()==1);
+      tokens[tcount++] = sv.toInt();
       idx = (nidx<(int)line.length()) ? nidx+1 : nidx;
+    }
+    auto tok=[&](int k,int def)->int{ return (k < tcount) ? tokens[k] : def; };
+
+    startHour[i]    = tok(0, startHour[i]);
+    startMin[i]     = tok(1, startMin[i]);
+    startHour2[i]   = tok(2, startHour2[i]);
+    startMin2[i]    = tok(3, startMin2[i]);
+    durationMin[i]  = tok(4, durationMin[i]);
+    durationSec[i]  = tok(5, durationSec[i]);
+    duration2Min[i] = tok(6, durationMin[i]);
+    duration2Sec[i] = tok(7, durationSec[i]);
+
+    int enIdx = (tcount >= 9) ? 8 : 6;
+    enableStartTime2[i] = (tok(enIdx, enableStartTime2[i]) == 1);
+
+    int dayStart = enIdx + 1;
+    for (int d=0; d<7; d++) {
+      days[i][d] = (tok(dayStart + d, days[i][d]) == 1);
     }
   }
   f.close();
@@ -3464,6 +3541,8 @@ void saveSchedule() {
     f.print(startMin2[i]);  f.print(',');
     f.print(durationMin[i]);f.print(',');
     f.print(durationSec[i]);f.print(',');
+    f.print(duration2Min[i]);f.print(',');
+    f.print(duration2Sec[i]);f.print(',');
     f.print(enableStartTime2[i] ? '1' : '0');
     for (int d=0; d<7; d++){ f.print(','); f.print(days[i][d] ? '1' : '0'); }
     f.println();
