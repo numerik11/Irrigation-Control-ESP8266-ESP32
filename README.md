@@ -10,7 +10,7 @@ The system supports automatic tank/mains water source selection, live weather in
 
 3. ESP8266 with I²C LCD — common, compact, low-pin-count display for smaller enclosures
 
-All versions support two programmable start times per day, 7-day scheduling, and minute/second-level run times, suitable for both small gardens and multi-zone irrigation setups.
+All versions support easly programmable start times per day, 7-day scheduling, and minute/second-level run times, suitable for both small gardens and multi-zone irrigation setups.
 
 ---
 
