@@ -41,6 +41,7 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
   - Rolling sum actual rainfall stats (1h / 24h)
 
 - **Hardware & I/O**
+  - WiFi Signal. 
   - KC868-A* support (PCF8574 @ 0x24 relays, 0x22 inputs)
   - Automatic I²C check for KC868-A* board if not found set GPIO for generic ESP32 board in settings. (s3 Recommended).
   - All zone/mains/tank, high/low and pins configurable in Setup (Reboot after chaging pins)
