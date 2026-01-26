@@ -1,4 +1,4 @@
-## ESP32 / KC868-A* 1-16 Zone Irrigation Controller
+## ESP32 1-16 Zone Irrigation Controller
 
 ESP32 (s3 Recommended) based irrigation controller designed to drive up to 16 solenoid zones.
 
