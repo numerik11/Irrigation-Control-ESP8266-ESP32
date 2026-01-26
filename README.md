@@ -51,7 +51,7 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
   - mDNS: `http://espirrigation.local/`
   - Event logger to CSV (weather snapshot per event, downloadable)
  
--  **Behaviour (Scheduling & Delays)
+-  **Behaviour (Scheduling & Delays)**
   - If programed to run while **rain**, **pause**, **master off**, or **rain cooldown** watering will be **CANCELLED** (and logged)  
   - Manual “On” commands also respect the same rules and cancel when blocked  
   - Wind delay, when enabled, scheduled watering is automatically postponed until wind speed falls below the configured threshold,         then starts automaticly. 
