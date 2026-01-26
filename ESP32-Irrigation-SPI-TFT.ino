@@ -1,4 +1,4 @@
-//130x230 SPI TFT / ESP32 
+//SPI TFT / ESP32 
 
 #ifndef ENABLE_DEBUG_ROUTES
   #define ENABLE_DEBUG_ROUTES 0   // set to 1 when you need them
