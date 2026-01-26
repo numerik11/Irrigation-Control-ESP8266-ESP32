@@ -2,7 +2,7 @@
 
 ESP32 (s3 Recommended) based irrigation controller designed to drive up to 16 solenoid zones.
 
-The system supports automatic tank/mains water source selection, live weather integration with rain and wind delays, and manual zone control, all managed through a local web interface at espirrigation.local.
+The system supports all the usual featues aswell as automatic tank/mains water source selection, live weather integration with rain and wind delays, manual zone control(button or ui), managed through a local web interface at espirrigation.local.
 
 1. ESP32 with 170×320 SPI TFT display — full-colour device interface for system status, rain/wind delays and active zones
 
