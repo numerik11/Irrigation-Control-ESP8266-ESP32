@@ -758,6 +758,7 @@ static bool g_tftPwmReady = false;
 static uint8_t g_tftBrightness = 125; // 0-255 duty when ON
 static const int TFT_PWM_CH = 7;      // LEDC channel for TFT BL
 static bool g_forceHomeReset = false; // force full HomeScreen repaint
+static bool g_forceRainReset = false; // force full RainScreen repaint
 
 static inline void tftDisplay(bool on){
   if (g_tftDisplayOn == on) return;
@@ -1331,6 +1332,7 @@ void loop() {
 
   // Hard block while paused/master off/cooldown
   if (isBlockedNow()) {
+    if (!lastWasDelayScreen) g_forceRainReset = true;
     for (int z=0; z<(int)zonesCount; ++z) if (zoneActive[z]) turnOffZone(z);
     if (now - lastScreenRefresh >= 1000) { lastScreenRefresh = now; RainScreen(); lastWasDelayScreen = true; }
     delay(15); return;
@@ -1338,6 +1340,7 @@ void loop() {
 
   const bool weatherDelay = (rainActive || windActive);
   if (weatherDelay) {
+    if (!lastWasDelayScreen) g_forceRainReset = true;
     for (int z=0; z<(int)zonesCount; ++z) if (zoneActive[z]) turnOffZone(z);
     if (now - lastScreenRefresh >= 1000) { lastScreenRefresh = now; RainScreen(); lastWasDelayScreen = true; }
   } else if (lastWasDelayScreen) {
@@ -2041,178 +2044,253 @@ void updateLCDForZone(int zone) {
 
 void RainScreen(){
   const int W = tft.width();
+  const int H = tft.height();
+  const int pad = 8;
+  const int topY = 38; // start a bit higher for compact cards
+  const int rainH = 60;
+  const int rainY = topY;
+  const int statusY = rainY + rainH + 6;
+  int causeH = H - statusY - 8;
+  if (causeH < 96) causeH = 96;
 
-  // Avoid needless redraws to reduce flashing
-  static bool lastPaused = false;
-  static bool lastRainAct = false;
-  static bool lastWindAct = false;
-  static int  lastQueued = -1;
-  static int  lastRunning = -1;
-  static float lastRain24 = NAN;
-  static float lastRain1h = NAN;
-  static uint32_t lastCooldown = 0;
-  static int lastRssi = 0;
+  static bool init = false;
+  static int lastW = -1;
+  static int lastH = -1;
+  static int lastStatusId = -1;
+  static char lastR1[12] = "";
+  static char lastR24[12] = "";
+  static char lastWind[16] = "";
+  static char lastCause[40] = "";
+  static char lastCooldown[24] = "";
+  static char lastPauseMaster[32] = "";
+  static int lastQueued = -1;
+  static int lastRunning = -1;
+  static int lastRssi = 9999;
   static bool lastMqtt = false;
-  static String lastCause;
-  static uint32_t lastDrawMs = 0;
 
-  const bool paused = isPausedNow();
-  const bool rainAct = rainActive;
-  const bool windAct = windActive;
-  String causeS = rainDelayCauseText();
-  const char* cause = causeS.c_str();
-  int queued=0, running=0;
-  for (int i=0;i<(int)zonesCount;i++) {
-    if (pendingStart[i]) queued++;
-    if (zoneActive[i])   running++;
+  if (g_forceRainReset) {
+    init = false;
+    g_forceRainReset = false;
   }
 
-  bool changed =
-    paused != lastPaused ||
-    rainAct != lastRainAct ||
-    windAct != lastWindAct ||
-    queued != lastQueued ||
-    running != lastRunning ||
-    fabsf(lastRainAmount - lastRain24) > 0.05f ||
-    fabsf(rain1hNow - lastRain1h) > 0.05f ||
-    rainCooldownUntilEpoch != lastCooldown ||
-    causeS != lastCause;
+  const bool paused = isPausedNow();
+  const bool masterOff = !systemMasterEnabled;
+  const bool delay = (rainActive || windActive);
+  const int statusId = masterOff ? 3 : (paused ? 2 : (delay ? 1 : 0));
 
-  // Only consider RSSI/MQTT changes if they move meaningfully (avoid redraw on tiny RSSI jitter)
-  bool rssiChanged = (abs(WiFi.RSSI() - lastRssi) >= 4);
-  bool mqttChanged = (_mqtt.connected() != lastMqtt);
+  bool layoutChanged = (!init || lastW != W || lastH != H);
+  if (layoutChanged) {
+    tft.fillScreen(C_BG);
+    lastW = W;
+    lastH = H;
+    init = true;
+  }
 
-  uint32_t nowMs = millis();
-  // Also allow a slow refresh every 8s for minor changes (including RSSI/MQTT)
-  if (!changed && !rssiChanged && !mqttChanged && (nowMs - lastDrawMs) < 8000) return;
+  if (layoutChanged || statusId != lastStatusId) {
+    const char* pill = "READY";
+    uint16_t pillColor = C_GOOD;
+    if (masterOff) { pill = "MASTER OFF"; pillColor = C_BAD; }
+    else if (paused) { pill = "PAUSED"; pillColor = C_WARN; }
+    else if (delay) { pill = "DELAY"; pillColor = C_WARN; }
+    drawTopBar("RAIN / WIND", pill, pillColor);
+    lastStatusId = statusId;
+  }
 
-  lastPaused = paused;
-  lastRainAct = rainAct;
-  lastWindAct = windAct;
-  lastQueued = queued;
-  lastRunning = running;
-  lastRain24 = lastRainAmount;
-  lastRain1h = rain1hNow;
-  lastCooldown = rainCooldownUntilEpoch;
-  lastRssi = WiFi.RSSI();
-  lastMqtt = _mqtt.connected();
-  lastCause = causeS;
-  lastDrawMs = nowMs;
+  int y = topY;
+  if (layoutChanged) {
+    drawCard(pad, y, W - 2*pad, rainH, C_PANEL, C_EDGE);
+    const int colW = (W - 2 * pad) / 3;
+    tft.setTextSize(1);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(pad + 4, y + 4); tft.print("1h");
+    tft.setCursor(pad + colW + 4, y + 4); tft.print("24h");
+    tft.setCursor(pad + 2 * colW + 4, y + 4); tft.print("Wind");
 
-  tft.fillScreen(C_BG);
+    y += rainH + 6;
+    drawCard(pad, y, W - 2*pad, causeH, C_PANEL, C_EDGE);
+    tft.setTextSize(2);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(pad + 6, y + 4);
+    tft.print("Status");
+  }
 
-  drawTopBar("RAIN / WIND", paused ? "PAUSED" : (rainActive||windActive?"DELAY":"READY"), paused ? C_WARN : (rainActive||windActive ? C_WARN : C_GOOD));
+  const int colW = (W - 2 * pad) / 3;
+  const int text2H = 18;
+  const int text1H = 10;
 
-  int pad = 8;
-  int y = 38; // start a bit higher for compact cards
-
-  // Card 1: Rain history (24h + 1h)
-  const int rainH = 60;
-  drawCard(pad, y, W-2*pad, rainH, C_PANEL, C_EDGE);
-  // Wind + rain summaries side by side
   float windNow = NAN;
   {
     DynamicJsonDocument js(384);
     DeserializationError derr = deserializeJson(js, cachedWeatherData);
-    if (!derr) {
-      windNow = js["wind"]["speed"] | NAN;
-    }
+    if (!derr) windNow = js["wind"]["speed"] | NAN;
   }
 
-  const int colW = (W - 2 * pad) / 3;
-  auto drawCol = [&](int idx, const char* lbl, const String& val){
+  char r1buf[12];
+  char r24buf[12];
+  char windbuf[16];
+
+  if (isfinite(rain1hNow)) snprintf(r1buf, sizeof(r1buf), "%.1fmm", rain1hNow);
+  else strncpy(r1buf, "--", sizeof(r1buf));
+
+  if (isfinite(lastRainAmount)) snprintf(r24buf, sizeof(r24buf), "%.1fmm", lastRainAmount);
+  else strncpy(r24buf, "--", sizeof(r24buf));
+
+  if (isfinite(windNow)) snprintf(windbuf, sizeof(windbuf), "%.1f/%.1f", windNow, windSpeedThreshold);
+  else snprintf(windbuf, sizeof(windbuf), "--/%.1f", windSpeedThreshold);
+
+  r1buf[sizeof(r1buf) - 1] = '\0';
+  r24buf[sizeof(r24buf) - 1] = '\0';
+  windbuf[sizeof(windbuf) - 1] = '\0';
+
+  auto updateColValue = [&](int idx, const char* val, char* last, size_t lastLen) {
+    if (!layoutChanged && strcmp(val, last) == 0) return;
     int x = pad + idx * colW + 4;
-    tft.setTextSize(1);
-    tft.setTextColor(C_MUTED);
-    tft.setCursor(x, y + 4);
-    tft.print(lbl);
+    int yv = rainY + 24;
+    int w = colW - 8;
+    tft.fillRect(x, yv, w, text2H, C_PANEL);
     tft.setTextSize(2);
     tft.setTextColor(C_TEXT);
-    tft.setCursor(x, y + 24);
+    tft.setCursor(x, yv);
     tft.print(val);
+    strncpy(last, val, lastLen);
+    last[lastLen - 1] = '\0';
   };
 
-  drawCol(0, "1h",  String(rain1hNow,1) + "mm");
-  drawCol(1, "24h", String(lastRainAmount,1) + "mm");
-  {
-    String w = isfinite(windNow) ? String(windNow,1) : String("--");
-    w += "/";
-    w += String(windSpeedThreshold,1);
-    drawCol(2, "Wind", w);
+  updateColValue(0, r1buf, lastR1, sizeof(lastR1));
+  updateColValue(1, r24buf, lastR24, sizeof(lastR24));
+  updateColValue(2, windbuf, lastWind, sizeof(lastWind));
+
+  String causeS = rainDelayCauseText();
+  const time_t now = time(nullptr);
+  const bool cooldownActive = (rainCooldownUntilEpoch && now < (time_t)rainCooldownUntilEpoch);
+  char causeBuf[40];
+  if (cooldownActive) {
+    strncpy(causeBuf, "Cooldown", sizeof(causeBuf));
+  } else if (causeS.length()) {
+    strncpy(causeBuf, causeS.c_str(), sizeof(causeBuf));
+  } else {
+    strncpy(causeBuf, "--", sizeof(causeBuf));
+  }
+  causeBuf[sizeof(causeBuf) - 1] = '\0';
+
+  if (layoutChanged || strcmp(causeBuf, lastCause) != 0) {
+    int x = pad + 6;
+    int yv = statusY + 20;
+    int w = W - 2 * pad - 12;
+    tft.fillRect(x, yv, w, text2H, C_PANEL);
+    uint16_t causeColor = C_TEXT;
+    if (masterOff) causeColor = C_BAD;
+    else if (paused || delay || cooldownActive) causeColor = C_WARN;
+    else causeColor = C_GOOD;
+    tft.setTextSize(2);
+    tft.setTextColor(causeColor);
+    tft.setCursor(x, yv);
+    tft.print(causeBuf);
+    strncpy(lastCause, causeBuf, sizeof(lastCause));
+    lastCause[sizeof(lastCause) - 1] = '\0';
   }
 
-  y += rainH + 6;
-
-  // Card 2: Cause / Wind / Cooldown / Master/Pause
-  const int causeH = 84;
-  drawCard(pad, y, W-2*pad, causeH, C_PANEL, C_EDGE);
-  tft.setTextSize(2);
-  tft.setTextColor(C_MUTED);
-  tft.setCursor(pad+6, y+4);
-  tft.print("Status");
-
-  tft.setTextSize(2);
-  tft.setTextColor(C_TEXT);
-  tft.setCursor(pad+6, y+20);
-  tft.print(cause ? cause : "--");
-
-  // Wind + cooldown + pause/master rows
-  float windNow2 = NAN;
-  {
-    DynamicJsonDocument js(384);
-    DeserializationError derr = deserializeJson(js, cachedWeatherData);
-    if (!derr) {
-      windNow2 = js["wind"]["speed"] | NAN;
-    }
-  }
-
-  tft.setTextSize(1);
-  int lineY = y + 38;
-  tft.setTextColor(C_MUTED);
-  tft.setCursor(pad+6, lineY);
-  tft.print("Cooldown: ");
-  if (rainCooldownUntilEpoch > time(nullptr)) {
-    uint32_t rem = (uint32_t)(rainCooldownUntilEpoch - time(nullptr));
+  char cooldownBuf[24];
+  if (cooldownActive) {
+    uint32_t rem = (uint32_t)(rainCooldownUntilEpoch - now);
     uint32_t mins = (rem + 59U) / 60U;
-    if (mins >= 60U) { tft.print(mins/60); tft.print("h"); }
-    else { tft.print(mins); tft.print("m"); }
-  } else tft.print("None");
+    if (mins >= 60U) {
+      uint32_t h = mins / 60U;
+      uint32_t m = mins % 60U;
+      if (m > 0U) snprintf(cooldownBuf, sizeof(cooldownBuf), "%luh %lum", (unsigned long)h, (unsigned long)m);
+      else snprintf(cooldownBuf, sizeof(cooldownBuf), "%luh", (unsigned long)h);
+    } else {
+      snprintf(cooldownBuf, sizeof(cooldownBuf), "%lum", (unsigned long)mins);
+    }
+  } else {
+    strncpy(cooldownBuf, "None", sizeof(cooldownBuf));
+  }
+  cooldownBuf[sizeof(cooldownBuf) - 1] = '\0';
 
-  lineY += 12;
-  tft.setCursor(pad+6, lineY);
-  tft.print("Pause ");
-  tft.print(paused ? "Yes" : "No");
-  tft.print(" | Master ");
-  tft.print(systemMasterEnabled ? "On" : "Off");
+  if (layoutChanged || strcmp(cooldownBuf, lastCooldown) != 0) {
+    int x = pad + 6;
+    int yv = statusY + 38;
+    int w = W - 2 * pad - 12;
+    tft.fillRect(x, yv, w, text1H, C_PANEL);
+    tft.setTextSize(1);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(x, yv);
+    tft.print("Cooldown: ");
+    tft.setTextColor(C_TEXT);
+    tft.print(cooldownBuf);
+    strncpy(lastCooldown, cooldownBuf, sizeof(lastCooldown));
+    lastCooldown[sizeof(lastCooldown) - 1] = '\0';
+  }
 
-  y += causeH + 6;
+  char pmBuf[32];
+  snprintf(pmBuf, sizeof(pmBuf), "Pause %s | Master %s", paused ? "Yes" : "No", systemMasterEnabled ? "On" : "Off");
+  if (layoutChanged || strcmp(pmBuf, lastPauseMaster) != 0) {
+    int x = pad + 6;
+    int yv = statusY + 50;
+    int w = W - 2 * pad - 12;
+    tft.fillRect(x, yv, w, text1H, C_PANEL);
+    tft.setTextSize(1);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(x, yv);
+    tft.print("Pause ");
+    tft.setTextColor(C_TEXT);
+    tft.print(paused ? "Yes" : "No");
+    tft.setTextColor(C_MUTED);
+    tft.print(" | Master ");
+    tft.setTextColor(C_TEXT);
+    tft.print(systemMasterEnabled ? "On" : "Off");
+    strncpy(lastPauseMaster, pmBuf, sizeof(lastPauseMaster));
+    lastPauseMaster[sizeof(lastPauseMaster) - 1] = '\0';
+  }
 
-  // Card 3: Ops (running + queued + connectivity)
-  const int opsH = 56;
-  drawCard(pad, y, W-2*pad, opsH, C_PANEL, C_EDGE);
-  tft.setTextSize(2);
-  tft.setTextColor(C_MUTED);
-  tft.setCursor(pad+6, y+4);
-  tft.print("Ops");
+  int queued = 0;
+  int running = 0;
+  for (int i = 0; i < (int)zonesCount; i++) {
+    if (pendingStart[i]) queued++;
+    if (zoneActive[i]) running++;
+  }
 
-  tft.setTextSize(2);
-  tft.setTextColor(C_TEXT);
-  tft.setCursor(pad+6, y+24);
-  tft.print("Run ");
-  tft.print(running);
-  tft.setCursor(pad+6, y+42);
-  tft.print("Q ");
-  tft.print(queued);
+  if (layoutChanged || running != lastRunning || queued != lastQueued) {
+    int x = pad + 6;
+    int yv = statusY + 62;
+    int w = W - 2 * pad - 12;
+    tft.fillRect(x, yv, w, text1H, C_PANEL);
+    tft.setTextSize(1);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(x, yv);
+    tft.print("Run ");
+    tft.setTextColor(C_TEXT);
+    tft.print(running);
+    tft.setTextColor(C_MUTED);
+    tft.print(" | Q ");
+    tft.setTextColor(C_TEXT);
+    tft.print(queued);
+    lastRunning = running;
+    lastQueued = queued;
+  }
 
-  tft.setTextSize(1);
-  tft.setTextColor(C_MUTED);
-  tft.setCursor(W - pad - 70, y+18);
-  tft.print("WiFi ");
-  tft.print(WiFi.RSSI());
-  tft.print("dBm");
-  tft.setCursor(W - pad - 70, y+30);
-  tft.print("MQTT ");
-  tft.print(_mqtt.connected() ? "up" : "down");
+  int rssi = WiFi.RSSI();
+  bool mqttOk = _mqtt.connected();
+  bool rssiChanged = (abs(rssi - lastRssi) >= 4);
+  if (layoutChanged || rssiChanged || mqttOk != lastMqtt) {
+    int x = pad + 6;
+    int yv = statusY + 74;
+    int w = W - 2 * pad - 12;
+    tft.fillRect(x, yv, w, text1H, C_PANEL);
+    tft.setTextSize(1);
+    uint16_t rssiColor = (rssi > -60) ? C_GOOD : (rssi > -75 ? C_WARN : C_BAD);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(x, yv);
+    tft.print("WiFi ");
+    tft.setTextColor(rssiColor);
+    tft.print(rssi);
+    tft.setTextColor(C_MUTED);
+    tft.print("dBm | MQTT ");
+    tft.setTextColor(mqttOk ? C_GOOD : C_BAD);
+    tft.print(mqttOk ? "up" : "down");
+    lastRssi = rssi;
+    lastMqtt = mqttOk;
+  }
 }
 
 void HomeScreen() {
