@@ -1,6 +1,6 @@
-## ESP32 / ESP8266 1-16 Zone Irrigation Controller
+## ESP32 / ESP8266 / KC868-A* 1-16 Zone Irrigation Controller
 
-ESP32 or ESP8266–based irrigation controllers designed to drive up to 16 solenoid zones.
+ESP32 (s3 Recommended) or ESP8266–based irrigation controllers designed to drive up to 16 solenoid zones.
 
 The system supports automatic tank/mains water source selection, live weather integration with rain and wind delays, and manual zone control, all managed through a local web interface at espirrigation.local.
 
@@ -41,10 +41,12 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
   - Rolling sum actual rainfall stats (1h / 24h)
 
 - **Hardware & I/O**
-  - KC868-A6 support (PCF8574 @ 0x24 relays, 0x22 inputs)
-  - Automatic I²C health + debounce → GPIO fallback for generic ESP32 boards
+  - KC868-A* support (PCF8574 @ 0x24 relays, 0x22 inputs)
+  - Automatic I²C check for KC868-A* board if not found set GPIO for generic ESP32 board in settings. (s3 Recommended).
   - All zone/mains/tank, high/low and pins configurable in Setup (Reboot after chaging pins)
-  - OLED status screens (Home / Rain Delay)
+  - OLED or TFT status screens (Home / Rain Delay) (Optional)
+  - Photoresistor and 100k resistor for BL control (off) if in enclosure and door is closed.
+  - 1-16 Relay Module 
 
 - **Networking & UX**
   - WiFiManager captive portal: `ESPIrrigationAP` (first boot/failure)
@@ -60,12 +62,11 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
 
 ## Requirements
 
-- **Board:** Any ESP32 Module (KC868-A6 recommended)
-- ** 6-relay module ** (If mot using KC868-A6)
+- **Board:** Any ESP32 Module (esp32 S3 or KC868-A* recommended)
+- ** 6-relay module ** (If mot using KC868-A*)
 - **Tank level Sensor - analog pin:** IO36 (A1) (≤ 3.3V ADC)
-- **Rain sensor:** IO27 (optional)
-- **Power:** Matches your solenoids (e.g., 12V DC or 12/24V AC)
-- **Weather API:** Free OpenWeather API key → https://home.openweathermap.org/users/sign_up
+- **Power:**  enough to power one or multiple solenoid coils, about 10w each usually (e.g., 12V DC or 12/24V AC)
+- **Weather API:** **IMPORTANT** Get a free OpenWeather API key from → https://home.openweathermap.org/users/sign_up
 
 ---
 
