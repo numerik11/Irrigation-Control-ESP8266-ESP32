@@ -41,7 +41,7 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
   - Rolling sum actual rainfall stats (1h / 24h)
 
 - **Hardware & I/O**
-  - WiFi Signal. 
+
   - KC868-A* support (PCF8574 @ 0x24 relays, 0x22 inputs)
   - Automatic I²C check for KC868-A* board if not found set GPIO for generic ESP32 board in settings. (s3 Recommended).
   - All zone/mains/tank, high/low and pins configurable in Setup (Reboot after chaging pins)
@@ -50,24 +50,24 @@ Free OpenWeatherMap API key → https://home.openweathermap.org/users/sign_up
   - 1-16 Relay Module 
 
 - **Networking & UX**
-  - WiFiManager captive portal: `ESPIrrigationAP` (first boot/failure)
+  - WiFiManager captive portal: `ESPIrrigationAP` (first boot/failure/wifi details)
   - mDNS: `http://espirrigation.local/`
   - Event logger to CSV (weather snapshot per event, downloadable)
  
 - **Behaviour (Scheduling & Delays)**
-  - If programed to run while **rain**, **pause**, **master off**, or **rain cooldown** watering will be **CANCELLED** (and logged)  
-  - Manual “On” commands also respect the same rules and cancel when blocked  
-  - Wind delay, when enabled, scheduled watering is automatically postponed until wind speed falls below the configured threshold,         then watering starts. 
+  - If programed to run while **rain**, **pause**, **master off**, or **rain cooldown** watering will be **CANCELLED** (logged)  
+  - Manual “On” commands also respect these same rules and cancel when blocked  
+  - Wind delay, scheduled watering is postponed until wind speed drops below the configured threshold, then watering starts. 
 
 ---
 
 ## Requirements
-
+- **WiFi Signal!**
 - **Board:** Any ESP32 Module (esp32 S3 or KC868-A* recommended)
-- ** 6-relay module ** (If mot using KC868-A*)
-- **Tank level Sensor - analog pin:** IO36 (A1) (≤ 3.3V ADC)
-- **Power:**  enough to power one or multiple solenoid coils, about 10w each usually (e.g., 12V DC or 12/24V AC)
-- **Weather API:** **IMPORTANT** Get a free OpenWeather API key from → https://home.openweathermap.org/users/sign_up
+- ** 1 - 16-relay module ** (If mot using KC868-A*)
+- **Tank level Sensor - analog pin:** IO36 (A1) (≤ 3.3V ADC) (Settings on UI)
+- **Power:**  enough to power one or multiple solenoid coils, about 10w each usually (12V DC or 12/24V AC)
+- **Weather API:** - **IMPORTANT** Get a free OpenWeather API key for weather data from → https://home.openweathermap.org/users/sign_up
 
 ---
 
