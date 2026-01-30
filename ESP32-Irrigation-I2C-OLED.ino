@@ -2357,6 +2357,15 @@ html += F("</b></a></div>");
 
   // ---------- Schedules (collapsible) ----------
   static const char* DLBL[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+  auto pad2 = [](int v) -> String {
+    if (v < 0) v = 0;
+    if (v < 10) {
+      char b[3];
+      snprintf(b, sizeof(b), "0%d", v);
+      return String(b);
+    }
+    return String(v);
+  };
   html += F("<div class='center'><div class='card sched'>");
   html += F("<h3 class='collapse' onclick=\"const b=document.getElementById('schedBody');"
             "const a=this.querySelector('.arr');"
@@ -2382,43 +2391,43 @@ html += F("</b></a></div>");
     html += F("</div></div>");
 
     // Start 1
-    html += F("<div class='rowx'><label>Start 1</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='23' name='startHour"); html += String(z);
-    html += F("' value='"); html += String(startHour[z]); html += F("'>");
+    html += F("<div class='rowx'><label>Start Time 1 -</label><div class='field inline'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startHour"); html += String(z);
+    html += F("' value='"); html += pad2(startHour[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='startMin"); html += String(z);
-    html += F("' value='"); html += String(startMin[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startMin"); html += String(z);
+    html += F("' value='"); html += pad2(startMin[z]); html += F("'>");
     html += F("</div></div>");
 
     // Start 2
-    html += F("<div class='rowx'><label>Start 2</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='23' name='startHour2"); html += String(z);
-    html += F("' value='"); html += String(startHour2[z]); html += F("'>");
+    html += F("<div class='rowx'><label>Start Time 2 -</label><div class='field inline'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startHour2"); html += String(z);
+    html += F("' value='"); html += pad2(startHour2[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='startMin2"); html += String(z);
-    html += F("' value='"); html += String(startMin2[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startMin2"); html += String(z);
+    html += F("' value='"); html += pad2(startMin2[z]); html += F("'>");
     html += F("<label class='toggle-inline'><input type='checkbox' name='enableStartTime2");
     html += String(z); html += F("' "); html += (enableStartTime2[z] ? "checked" : "");
     html += F("> Enable</label></div></div>");
 
     // Duration
-    html += F("<div class='rowx'><label>Duration</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='600' name='durationMin"); html += String(z);
-    html += F("' value='"); html += String(durationMin[z]); html += F("'>");
+    html += F("<div class='rowx'><label>Run Time 1 -</label><div class='field inline'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,3}' maxlength='3' name='durationMin"); html += String(z);
+    html += F("' value='"); html += pad2(durationMin[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='durationSec"); html += String(z);
-    html += F("' value='"); html += String(durationSec[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='durationSec"); html += String(z);
+    html += F("' value='"); html += pad2(durationSec[z]); html += F("'>");
     html += F("<span class='unit'>s</span></div></div>");
 
     // Duration 2 (used when Start 2 fires)
     html += F("<div class='rowx dur2row' id='dur2row"); html += String(z); html += F("' style='display:");
     html += (enableStartTime2[z] ? "grid" : "none");
-    html += F("'><label>Duration 2</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='600' name='duration2Min"); html += String(z);
-    html += F("' value='"); html += String(duration2Min[z]); html += F("'>");
+    html += F("'><label>Run Time 2 -</label><div class='field inline'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,3}' maxlength='3' name='duration2Min"); html += String(z);
+    html += F("' value='"); html += pad2(duration2Min[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='duration2Sec"); html += String(z);
-    html += F("' value='"); html += String(duration2Sec[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='duration2Sec"); html += String(z);
+    html += F("' value='"); html += pad2(duration2Sec[z]); html += F("'>");
     html += F("<span class='unit'>s</span><small class='sub'>Used only for Start 2</small></div></div>");
 
     // Days
@@ -2524,7 +2533,7 @@ html += F("</b></a></div>");
 
     // Meta row: Duration
     html += F("<div class='zone-meta-row'>");
-      html += F("<span class='pill-soft'><span>Duration&nbsp;</span><b>");
+      html += F("<span class='pill-soft'><span>Run Time 1 -&nbsp;</span><b>");
       html += String(durM);
       html += F("m ");
       if (durS < 10) html += F("0");
@@ -2534,7 +2543,7 @@ html += F("</b></a></div>");
         unsigned long d2 = (unsigned long)duration2Min[z]*60UL + (unsigned long)duration2Sec[z];
         unsigned int d2m = d2 / 60;
         unsigned int d2s = d2 % 60;
-        html += F("<span class='pill-soft'><span>Duration 2&nbsp;</span><b>");
+        html += F("<span class='pill-soft'><span>Run Time 2 -&nbsp;</span><b>");
         html += String(d2m);
         html += F("m ");
         if (d2s < 10) html += F("0");
@@ -3152,6 +3161,11 @@ void handleSetupPage() {
 // ---------- Schedule POST (per-zone card or full form) ----------
 void handleSubmit() {
   HttpScope _scope;
+  auto clampInt = [](int v, int lo, int hi) -> int {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+  };
 
   // If onlyZone is present -> only update that zone from fields in this form
   if (server.hasArg("onlyZone")) {
@@ -3163,14 +3177,14 @@ void handleSubmit() {
         if (nm.length()) zoneNames[z]=nm;
       }
       // Times / duration
-      if (server.hasArg("startHour"+String(z)))  startHour[z]  = server.arg("startHour"+String(z)).toInt();
-      if (server.hasArg("startMin"+String(z)))   startMin[z]   = server.arg("startMin"+String(z)).toInt();
-      if (server.hasArg("startHour2"+String(z))) startHour2[z] = server.arg("startHour2"+String(z)).toInt();
-      if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
-      if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
-      if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
-      if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
-      if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
+      if (server.hasArg("startHour"+String(z)))  startHour[z]  = clampInt(server.arg("startHour"+String(z)).toInt(), 0, 23);
+      if (server.hasArg("startMin"+String(z)))   startMin[z]   = clampInt(server.arg("startMin"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("startHour2"+String(z))) startHour2[z] = clampInt(server.arg("startHour2"+String(z)).toInt(), 0, 23);
+      if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = clampInt(server.arg("startMin2"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("durationMin"+String(z))) durationMin[z]=clampInt(server.arg("durationMin"+String(z)).toInt(), 0, 600);
+      if (server.hasArg("durationSec"+String(z))) durationSec[z]=clampInt(server.arg("durationSec"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=clampInt(server.arg("duration2Min"+String(z)).toInt(), 0, 600);
+      if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=clampInt(server.arg("duration2Sec"+String(z)).toInt(), 0, 59);
       enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
       // Days
       for (int d=0; d<7; d++) days[z][d] = server.hasArg("day"+String(z)+"_"+String(d));
@@ -3188,14 +3202,14 @@ void handleSubmit() {
       String nm=cleanName(server.arg("zoneName"+String(z)));
       if (nm.length()) zoneNames[z]=nm;
     }
-    if (server.hasArg("startHour"+String(z)))  startHour[z]  = server.arg("startHour"+String(z)).toInt();
-    if (server.hasArg("startMin"+String(z)))   startMin[z]   = server.arg("startMin"+String(z)).toInt();
-    if (server.hasArg("startHour2"+String(z))) startHour2[z] = server.arg("startHour2"+String(z)).toInt();
-    if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
-    if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
-    if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
-    if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
-    if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
+    if (server.hasArg("startHour"+String(z)))  startHour[z]  = clampInt(server.arg("startHour"+String(z)).toInt(), 0, 23);
+    if (server.hasArg("startMin"+String(z)))   startMin[z]   = clampInt(server.arg("startMin"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("startHour2"+String(z))) startHour2[z] = clampInt(server.arg("startHour2"+String(z)).toInt(), 0, 23);
+    if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = clampInt(server.arg("startMin2"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("durationMin"+String(z))) durationMin[z]=clampInt(server.arg("durationMin"+String(z)).toInt(), 0, 600);
+    if (server.hasArg("durationSec"+String(z))) durationSec[z]=clampInt(server.arg("durationSec"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=clampInt(server.arg("duration2Min"+String(z)).toInt(), 0, 600);
+    if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=clampInt(server.arg("duration2Sec"+String(z)).toInt(), 0, 59);
     enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
   }
   saveSchedule(); saveConfig();
