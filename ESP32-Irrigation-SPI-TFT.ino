@@ -3347,13 +3347,12 @@ void handleRoot() {
   DeserializationError werr = deserializeJson(js, cachedWeatherData);
 
   // Safe reads
-  float temp = NAN, hum = NAN, ws = NAN, gust = NAN, feels = NAN;
+  float temp = NAN, hum = NAN, ws = NAN, feels = NAN;
   if (!werr) {
     if (js["main"]["temp"].is<float>())       temp  = js["main"]["temp"].as<float>();
     if (js["main"]["feels_like"].is<float>()) feels = js["main"]["feels_like"].as<float>();
     if (js["main"]["humidity"].is<float>())   hum   = js["main"]["humidity"].as<float>();
     if (js["wind"]["speed"].is<float>())      ws    = js["wind"]["speed"].as<float>();
-    if (js["wind"]["gust"].is<float>())       gust  = js["wind"]["gust"].as<float>();
   }
 
   String cond = werr ? "-" : String(js["weather"][0]["main"].as<const char*>());
@@ -3546,7 +3545,6 @@ html += F("</b></a></div>");
   html += F("<div class='chip'>Feels <span id='feelsChip'>"); html += (isnan(feels) ? String("--") : String(feels,1)+" C"); html += F("</span></div>");
   html += F("<div class='chip'>Humidity <span id='humChip'>");  html += (isnan(hum)  ? String("--") : String((int)hum)+" %"); html += F("</span></div>");
   html += F("<div class='chip'>Wind <span id='windChip'>"); html += (isnan(ws)   ? String("--") : String(ws,1)+" m/s"); html += F("</span></div>");
-  html += F("<div class='chip'>Gust <span id='gustChip'>"); html += (isnan(gust) ? String("--") : String(gust,1)+" m/s"); html += F("</span></div>");
   html += F("<div class='chip'>Condition <b id='cond'>");
   html += cond.length() ? cond : String("--");
   html += F("</b></div></div></div>");
@@ -3933,7 +3931,6 @@ html += F("</b></a></div>");
   html += F("const feelsEl=document.getElementById('feelsChip'); if(feelsEl){ const v=st.feels_like; feelsEl.textContent=(typeof v==='number')?v.toFixed(1)+' C':'--'; }");
   html += F("const humEl=document.getElementById('humChip'); if(humEl){ const v=st.humidity; humEl.textContent=(typeof v==='number')?Math.round(v)+' %':'--'; }");
   html += F("const windEl=document.getElementById('windChip'); if(windEl){ const v=st.wind; windEl.textContent=(typeof v==='number')?v.toFixed(1)+' m/s':'--'; }");
-  html += F("const gustEl=document.getElementById('gustChip'); if(gustEl){ const v=(typeof st.gustNow==='number')?st.gustNow:((typeof st.gust24h==='number')?st.gust24h:null); gustEl.textContent=(typeof v==='number')?v.toFixed(1)+' m/s':'--'; }");
 
   // keep master pill synced
   html += F("const bm=document.getElementById('btn-master'); const ms=document.getElementById('master-state');");
