@@ -8,7 +8,7 @@
   server.on("/whereami", HTTP_GET, handleWhereAmI);
 #endif
 #ifndef ENABLE_OTA
-  #define ENABLE_OTA 0
+  #define ENABLE_OTA 1
 #endif
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -29,6 +29,7 @@
 #include <math.h>
 extern "C" {
   #include "esp_log.h"
+  #include "esp_wifi.h"
 }
 #include <time.h>
 #include <ESPmDNS.h> 
@@ -37,11 +38,11 @@ extern "C" {
 // ---------- Hardware ----------
 static const uint8_t MAX_ZONES = 16;
 
-constexpr uint8_t I2C_SDA = 4;   //8 for s3
-constexpr uint8_t I2C_SCL = 15;  //9 for s3
+constexpr uint8_t I2C_SDA = 8;   //8 for s3
+constexpr uint8_t I2C_SCL = 9;  //9 for s3
  
 #ifndef STATUS_PIXEL_PIN
-#define STATUS_PIXEL_PIN 48   // WS2812 status LED
+#define STATUS_PIXEL_PIN 48   // // ESP32-S3 DevKitC-1 onboard WS2812; set -1 to disable
 #endif
 static const uint8_t STATUS_PIXEL_COUNT = 1;
 
@@ -765,6 +766,14 @@ void setup() {
   // Improve HTTP responsiveness
   WiFi.setTxPower(kWifiTxPower);
   WiFi.setSleep(false); // NEW: disable modem sleep for snappier responses
+  WiFi.enableLongRange(true);          // trade speed for sensitivity
+  {
+    esp_err_t err = esp_wifi_set_protocol(WIFI_IF_STA,
+      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+    if (err != ESP_OK) {
+      Serial.printf("[WiFi] set_protocol failed: %d\n", (int)err);
+    }
+  }
 
   // Connected screen
   display.clearDisplay();
@@ -1211,6 +1220,11 @@ void wifiCheck() {
       WiFi.setSleep(false); // keep disabled after reconnect
       WiFi.setTxPower(kWifiTxPower);
       WiFi.enableLongRange(true);
+      esp_err_t err = esp_wifi_set_protocol(WIFI_IF_STA,
+        WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+      if (err != ESP_OK) {
+        Serial.printf("[WiFi] set_protocol failed: %d\n", (int)err);
+      }
     } else {
       Serial.println("Reconnection failed (kept creds, not opening portal).");
     }
@@ -2127,7 +2141,15 @@ void handleRoot() {
   const String causeText = rainDelayCauseText();
 
   // --- HTML ---
-  String html; html.reserve(40000);
+  String html; html.reserve(6000);
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  auto flush = [&](){
+    if (html.length()) {
+      server.sendContent(html);
+      html = "";
+    }
+  };
   html += F("<!doctype html><html lang='en' data-theme='light'><head>");
   html += F("<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
   html += F("<title>ESP32 Irrigation</title>");
@@ -2249,6 +2271,7 @@ void handleRoot() {
   html += F(".card h3{font-size:1.12rem;}");
   html += F("}");
   html += F("</style></head><body>");
+  flush();
 
   // --- Nav ---
   html += F("<div class='nav'><div class='in'>");
@@ -2330,6 +2353,7 @@ html += F("</b></a></div>");
   html += F("</div><div class='hint'>Active weather delays cancel watering if scheduled.</div></div>");
 
   html += F("</div></div>"); // end glass / grid
+  flush();
 
   // ---------- Schedules (collapsible) ----------
   static const char* DLBL[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
@@ -2408,6 +2432,7 @@ html += F("</b></a></div>");
     // Actions
     html += F("<div class='toolbar' style='justify-content:flex-end'><button class='btn' type='submit'>Save Zone</button></div>");
     html += F("</form></div>");
+    flush();
   }
 
   html += F("</div>"); // .sched-grid
@@ -2415,6 +2440,7 @@ html += F("</b></a></div>");
             "<button class='btn' id='btn-save-all' title='Save all zone schedules'>Save All</button>"
             "</div>");
   html += F("</div></div></div>"); // #schedBody, .card.sched, .center
+  flush();
 
     // --- Live Zones ---
   html += F("<div class='center' style='margin-top:12px'><div class='card'>");
@@ -2536,9 +2562,11 @@ html += F("</b></a></div>");
     html += F("</div>"); // .toolbar
 
     html += F("</div>"); // .zone-card
+    flush();
   }
 
   html += F("</div></div></div>"); // Close zones block
+  flush();
 
   // --- Tools / System Controls ---
   html += F("<div class='grid center' style='margin:12px auto 20px'><div class='card' style='grid-column:1/-1'>");
@@ -2547,17 +2575,19 @@ html += F("</b></a></div>");
   html += F("<a class='btn btn-secondary' href='/events'>Events</a>");
   html += F("<a class='btn btn-secondary' href='/status'>Status JSON</a>");
   html += F("</div></div></div>");
+  flush();
 
   html += F("<div class='grid center' style='margin:0 auto 24px'><div class='card' style='grid-column:1/-1'>");
   html += F("<h3>System Controls</h3><div class='toolbar'>");
   html += F("<button class='btn btn-secondary' id='toggle-backlight-btn' title='Invert OLED (night mode)'>LCD Toggle</button>");
   html += F("<button class='btn btn-danger' id='rebootBtn'>Reboot</button>");
   html += F("</div></div></div>");
+  flush();
 
   // --- JS ---
   html += F("<script>");
   html += F("function pad(n){return n<10?'0'+n:n;}");
-  html += F("let _devEpoch=null; let _tickTimer=null; let _lastTemp=null;");
+  html += F("let _devEpoch=null; let _tickTimer=null; let _lastTemp=null; let _lastTempTrend='\\u2192';");
   html += F("function startDeviceClock(seedSec){_devEpoch=seedSec;if(_tickTimer)clearInterval(_tickTimer);");
   html += F("const draw=()=>{if(_devEpoch==null)return; const d=new Date(_devEpoch*1000);");
   html += F("const h=pad(d.getHours()),m=pad(d.getMinutes()),s=pad(d.getSeconds());");
@@ -2654,13 +2684,13 @@ html += F("</b></a></div>");
   html += F("if(suns) suns.textContent = st.sunsetLocal  || '--:--';");
   html += F("if(press){ const p=st.pressure; press.textContent=(typeof p==='number' && p>0)?p.toFixed(0):'--'; }");
   html += F("const tempEl=document.getElementById('tempChip'); const trendEl=document.getElementById('tempTrend');");
-  html += F("if(tempEl){ const v=st.temp; let arrow='\\u2192';");
+  html += F("if(tempEl){ const v=st.temp;");
   html += F("  if(typeof v==='number'){");
   html += F("    tempEl.textContent=v.toFixed(1)+' C';");
-  html += F("    if(_lastTemp!==null){ const d=v-_lastTemp; if(d>0.1) arrow='\\u2191'; else if(d<-0.1) arrow='\\u2193'; }");
+  html += F("    if(_lastTemp!==null){ const d=v-_lastTemp; if(d>0.1) _lastTempTrend='\\u2191'; else if(d<-0.1) _lastTempTrend='\\u2193'; }");
   html += F("    _lastTemp=v;");
-  html += F("  } else { tempEl.textContent='--'; _lastTemp=null; }");
-  html += F("  if(trendEl){ trendEl.textContent=arrow; trendEl.style.color=(arrow==='\\u2191')?'#16a34a':(arrow==='\\u2193')?'#dc2626':'inherit'; }");
+  html += F("  } else { tempEl.textContent='--'; _lastTemp=null; _lastTempTrend='\\u2192'; }");
+  html += F("  if(trendEl){ trendEl.textContent=_lastTempTrend; trendEl.style.color=(_lastTempTrend==='\\u2191')?'#16a34a':(_lastTempTrend==='\\u2193')?'#dc2626':'inherit'; }");
   html += F("}");
   html += F("const feelsEl=document.getElementById('feelsChip'); if(feelsEl){ const v=st.feels_like; feelsEl.textContent=(typeof v==='number')?v.toFixed(1)+' C':'--'; }");
   html += F("const humEl=document.getElementById('humChip'); if(humEl){ const v=st.humidity; humEl.textContent=(typeof v==='number')?Math.round(v)+' %':'--'; }");
@@ -2705,8 +2735,8 @@ html += F("</b></a></div>");
   html += F("}");
 
   html += F("</script></body></html>");
-
-  server.send(200, "text/html", html);
+  flush();
+  server.sendContent("");
 }
 
 // Setup Page 
@@ -2997,9 +3027,9 @@ void handleSetupPage() {
   // IANA input + themed select
   html += F("<div class='row'><label>Select Timezone</label>");
   html += F("<div style='flex:1;display:grid;gap:6px'>");
-  html += F("<input class='in-med' type='text' name='tzIANA' value='");
+  html += F("<input type='hidden' name='tzIANA' value='");
   html += tzIANA;
-  html += F("' placeholder='Australia/Adelaide'>");
+  html += F("'>");
   html += F("<select class='in-med' id='tzIANASelect'><option value=''>Select from list</option></select>");
   html += F("</div>");
   html += F("</div>");
