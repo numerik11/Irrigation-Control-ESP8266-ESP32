@@ -839,6 +839,25 @@ static uint8_t g_tftBrightness = 125; // 0-255 duty when ON
 static const int TFT_PWM_CH = 7;      // LEDC channel for TFT BL
 static bool g_forceHomeReset = false; // force full HomeScreen repaint
 static bool g_forceRainReset = false; // force full RainScreen repaint
+static void tftInitBacklightPwm() {
+  g_tftPwmReady = false;
+  if (tftBlPin < 0) return;
+  if (!isValidGpioPin(tftBlPin)) {
+    Serial.printf("[TFT] Invalid tftBlPin=%d; disabling backlight pin.\n", tftBlPin);
+    tftBlPin = -1;
+    return;
+  }
+  const uint32_t freq = 5000;
+  const uint8_t resBits = 8;
+  double actual = ledcSetup(TFT_PWM_CH, freq, resBits);
+  if (actual <= 0) {
+    Serial.println("[TFT] LEDC setup failed; PWM backlight disabled.");
+    return;
+  }
+  ledcAttachPin(tftBlPin, TFT_PWM_CH);
+  g_tftPwmReady = true;
+  ledcWrite(TFT_PWM_CH, g_tftBlOn ? g_tftBrightness : 0);
+}
 
 static inline void tftDisplay(bool on){
   if (g_tftDisplayOn == on) return;
@@ -1021,11 +1040,14 @@ void setup() {
   new (&tft) Adafruit_ST7789(&TFTSPI, tftCsPin, tftDcPin, tftRstPin);
   TFTSPI.begin(tftSclkPin, -1, tftMosiPin, tftCsPin);
 
+  tftInitBacklightPwm();
+
   tft.init(TFT_W, TFT_H);
   tft.setRotation(3);                 // try 0/1/2/3 if orientation is wrong
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextWrap(true);
   tft.setTextColor(ST77XX_WHITE);
+  tftBacklight(true);
 
   // Boot splash
   tft.setCursor(10, 20);
@@ -1153,6 +1175,12 @@ void setup() {
   float chipTemp = NAN;
   if (readChipTempC(chipTemp)) doc["chipTempC"] = chipTemp;
   else                         doc["chipTempC"] = nullptr;
+  const int tftPct = (int)lroundf((float)g_tftBrightness * 100.0f / 255.0f);
+  doc["tftBlPin"]         = tftBlPin;
+  doc["tftPwm"]           = g_tftPwmReady;
+  doc["tftBlOn"]          = g_tftBlOn;
+  doc["tftDisplayOn"]     = g_tftDisplayOn;
+  doc["tftBrightnessPct"] = tftPct;
 
     // Current rain (actuals)
     doc["rain1hNow"] = rain1hNow;
@@ -1357,6 +1385,79 @@ void setup() {
     HttpScope _scope;
     if (LittleFS.exists("/events.csv")){ File f=LittleFS.open("/events.csv","r"); server.streamFile(f,"text/csv"); f.close(); }
     else server.send(404,"text/plain","No event log");
+  });
+  server.on("/tft_selftest", HTTP_GET, [](){
+    HttpScope _scope;
+    String msg;
+    bool pinsOk = true;
+    auto chk = [&](const char* name, int pin, bool allowNeg){
+      if (pin == -1 && allowNeg) return;
+      if (!isValidGpioPin(pin) || isUnsafeTftPin(pin)) {
+        pinsOk = false;
+        msg += String(name) + " invalid/unsafe: " + String(pin) + "\n";
+      }
+    };
+    chk("TFT_SCLK", tftSclkPin, false);
+    chk("TFT_MOSI", tftMosiPin, false);
+    chk("TFT_CS",   tftCsPin,   false);
+    chk("TFT_DC",   tftDcPin,   false);
+    chk("TFT_RST",  tftRstPin,  true);
+    chk("TFT_BL",   tftBlPin,   true);
+
+    if (!pinsOk) {
+      server.send(500, "text/plain", msg.length() ? msg : "Invalid TFT pins");
+      return;
+    }
+
+    const bool oldBlOn = g_tftBlOn;
+    const bool oldDisp = g_tftDisplayOn;
+    const uint8_t oldDuty = g_tftBrightness;
+
+    tftInitBacklightPwm();
+
+    tft.fillScreen(ST77XX_RED);   delay(120);
+    tft.fillScreen(ST77XX_GREEN); delay(120);
+    tft.fillScreen(ST77XX_BLUE);  delay(120);
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.print("TFT SELF-TEST");
+    tft.setTextSize(1);
+    tft.setCursor(10, 36);
+    tft.print("SCLK "); tft.print(tftSclkPin);
+    tft.print(" MOSI "); tft.print(tftMosiPin);
+    tft.print(" CS "); tft.print(tftCsPin);
+    tft.setCursor(10, 52);
+    tft.print("DC "); tft.print(tftDcPin);
+    tft.print(" RST "); tft.print(tftRstPin);
+    tft.print(" BL "); tft.print(tftBlPin);
+
+    if (tftBlPin >= 0) {
+      if (g_tftPwmReady) {
+        tftSetBrightness(100); delay(120);
+        tftSetBrightness(20);  delay(120);
+        tftSetBrightness(80);  delay(120);
+      } else {
+        tftBacklight(false); delay(150);
+        tftBacklight(true);  delay(150);
+      }
+    }
+
+    if (tftBlPin >= 0) {
+      const int oldPct = (int)lroundf((float)oldDuty * 100.0f / 255.0f);
+      tftSetBrightness((uint8_t)oldPct);
+      tftBacklight(oldBlOn);
+    } else {
+      tftDisplay(oldDisp);
+    }
+    g_forceHomeReset = true;
+
+    msg = "TFT self-test OK\n";
+    msg += "PWM: "; msg += (g_tftPwmReady ? "yes" : "no");
+    msg += "\nBacklight: ";
+    msg += (tftBlPin >= 0 ? (g_tftBlOn ? "on" : "off") : (g_tftDisplayOn ? "display-on" : "display-off"));
+    server.send(200, "text/plain", msg);
   });
   server.on("/tft_brightness", HTTP_POST, [](){
     HttpScope _scope;
@@ -2025,11 +2126,13 @@ bool checkWindRain() {
   // --- 4) Apply feature gates and build "effective" flags ---
   bool effectiveInstantRain =
       rainDelayEnabled &&
+      rainDelayFromForecastEnabled &&
       newWeatherRainActual;
 
   // 24h threshold rain: only when actual 24h rainfall >= user threshold.
   bool effectiveThresholdRain =
       rainDelayEnabled &&
+      rainDelayFromForecastEnabled &&
       (rainThreshold24h_mm > 0) &&
       aboveThreshold;
 
@@ -3279,8 +3382,9 @@ void handleRoot() {
   html += F("background:radial-gradient(1200px 600px at 10% -5%,var(--bg2),transparent),");
   html += F("radial-gradient(1200px 700px at 100% 0%,var(--ring),transparent),");
   html += F("radial-gradient(900px 500px at -10% 80%,var(--ring2),transparent),var(--bg);");
-  html += F("color:var(--ink);font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif}");
+  html += F("color:var(--ink);font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;line-height:1.35}");
   html += F(":root{--gap:16px;--pad:18px;--pad-lg:22px;--radius:20px;--radius-sm:16px;}");
+  html += F("a{text-decoration:none;color:inherit}");
 
   // Top nav - made a bit tighter on mobiles
   html += F(".nav{position:sticky;top:0;z-index:10;padding:10px 12px 12px;");
@@ -3318,6 +3422,7 @@ void handleRoot() {
   html += F(".btn-secondary{background:transparent;color:var(--ink);border:1px solid var(--line);box-shadow:none}");
   html += F(".btn:disabled{background:#7f8aa1;cursor:not-allowed;box-shadow:none}.btn-danger{background:linear-gradient(180deg,#ef4444,#b91c1c);border-color:rgba(185,28,28,.6)}");
   html += F(".btn,.btn-ghost,.pill{transition:transform .06s ease,box-shadow .06s ease,filter .06s ease}");
+  html += F(".btn,.btn-ghost,.pill{touch-action:manipulation}");
   html += F(".btn:active:not(:disabled),.btn-ghost:active,.pill:active{transform:translateY(1px);box-shadow:inset 0 2px 6px rgba(0,0,0,.25)}");
   html += F(".btn,.btn-ghost,.pill{position:relative;overflow:hidden}");
   html += F(".ripple{position:absolute;border-radius:999px;transform:scale(0);background:rgba(255,255,255,.35);animation:ripple .5s ease-out;pointer-events:none}");
@@ -3349,6 +3454,7 @@ void handleRoot() {
   html += F(".btn:hover{filter:brightness(1.05)}");
   html += F(".chip:hover,.pill:hover{filter:brightness(1.02)}");
   html += F(".btn:focus-visible,.pill:focus-visible,.chip:focus-visible{outline:2px solid var(--primary);outline-offset:2px}");
+  html += F("@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}");
 
   // Schedules styles (collapsible, mobile-friendly)
   html += F(".sched{margin-top:var(--gap)}");
@@ -3496,7 +3602,7 @@ html += F("</b></a></div>");
     html += F("</div></div>");
 
     // Start 1
-    html += F("<div class='rowx'><label>Start 1</label><div class='field inline'>");
+    html += F("<div class='rowx'><label>Start Time 1 -</label><div class='field inline'>");
     html += F("<input class='in' type='number' min='0' max='23' name='startHour"); html += String(z);
     html += F("' value='"); html += String(startHour[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
@@ -3505,7 +3611,7 @@ html += F("</b></a></div>");
     html += F("</div></div>");
 
     // Start 2
-    html += F("<div class='rowx'><label>Start 2</label><div class='field inline'>");
+    html += F("<div class='rowx'><label>Start Time 2 -</label><div class='field inline'>");
     html += F("<input class='in' type='number' min='0' max='23' name='startHour2"); html += String(z);
     html += F("' value='"); html += String(startHour2[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
@@ -3516,7 +3622,7 @@ html += F("</b></a></div>");
     html += F("> Enable</label></div></div>");
 
     // Duration
-    html += F("<div class='rowx'><label>Duration</label><div class='field inline'>");
+    html += F("<div class='rowx'><label>Run Time 1 -</label><div class='field inline'>");
     html += F("<input class='in' type='number' min='0' max='600' name='durationMin"); html += String(z);
     html += F("' value='"); html += String(durationMin[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
@@ -3527,13 +3633,13 @@ html += F("</b></a></div>");
     // Duration 2 (used when Start 2 fires)
     html += F("<div class='rowx dur2row' id='dur2row"); html += String(z); html += F("' style='display:");
     html += (enableStartTime2[z] ? "grid" : "none");
-    html += F("'><label>Duration 2</label><div class='field inline'>");
+    html += F("'><label>Run Time 2 -</label><div class='field inline'>");
     html += F("<input class='in' type='number' min='0' max='600' name='duration2Min"); html += String(z);
     html += F("' value='"); html += String(duration2Min[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
     html += F("<input class='in' type='number' min='0' max='59' name='duration2Sec"); html += String(z);
     html += F("' value='"); html += String(duration2Sec[z]); html += F("'>");
-    html += F("<span class='unit'>s</span><small class='sub'>Used only for Start 2</small></div></div>");
+    html += F("'</div></div>");
 
     // Days
     html += F("<div class='rowx'><label>Days</label><div class='days-grid'>");
@@ -3639,7 +3745,7 @@ html += F("</b></a></div>");
 
     // Meta row: Duration
     html += F("<div class='zone-meta-row'>");
-      html += F("<span class='pill-soft'><span>Duration&nbsp;</span><b>");
+      html += F("<span class='pill-soft'><span>Run Time 1 -&nbsp;</span><b>");
       html += String(durM);
       html += F("m ");
       if (durS < 10) html += F("0");
@@ -3649,7 +3755,7 @@ html += F("</b></a></div>");
         unsigned long d2 = (unsigned long)duration2Min[z]*60UL + (unsigned long)duration2Sec[z];
         unsigned int d2m = d2 / 60;
         unsigned int d2s = d2 % 60;
-        html += F("<span class='pill-soft'><span>Duration 2&nbsp;</span><b>");
+        html += F("<span class='pill-soft'><span>Run Time 2 -&nbsp;</span><b>");
         html += String(d2m);
         html += F("m ");
         if (d2s < 10) html += F("0");
@@ -3694,7 +3800,6 @@ html += F("</b></a></div>");
 
   html += F("<div class='grid center' style='margin:0 auto 24px'><div class='card' style='grid-column:1/-1'>");
   html += F("<h3>System Controls</h3><div class='toolbar'>");
-  html += F("<button class='btn btn-secondary' id='toggle-backlight-btn' title='Invert OLED (night mode)'>LCD Toggle</button>");
   html += F("<button class='btn btn-danger' id='rebootBtn'>Reboot</button>");
   html += F("</div></div></div>");
   flush();
@@ -3728,8 +3833,6 @@ html += F("</b></a></div>");
   html += F("document.querySelectorAll('.btn,.btn-ghost,.pill').forEach(el=>{el.addEventListener('pointerdown',addRipple);});");
   html += F("async function toggleZone(z,on){if(_busy)return;_busy=true;try{await postJson('/valve/'+(on?'on/':'off/')+z,{t:Date.now()});setTimeout(refreshStatus,200);}catch(e){console.error(e);}finally{_busy=false;}}");
 
-  html += F("const btnBack=document.getElementById('toggle-backlight-btn');");
-  html += F("if(btnBack){btnBack.addEventListener('click',async()=>{if(_busy)return;_busy=true;try{await postJson('/toggleBacklight',{t:Date.now()});}catch(e){}finally{_busy=false;}});} ");
   html += F("const btnReboot=document.getElementById('rebootBtn');");
   html += F("if(btnReboot){btnReboot.addEventListener('click',async()=>{if(confirm('Reboot controller now?')){try{await postJson('/reboot',{t:Date.now()});}catch(e){}}});} ");
   html += F("document.getElementById('btn-clear-delays')?.addEventListener('click',async()=>{await postForm('/clear_delays','a=1');setTimeout(refreshStatus,200);});");
@@ -3863,7 +3966,7 @@ void handleSetupPage() {
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
   html += F("<title>Setup - ESP32 Irrigation</title>");
   html += F("<style>");
-  html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px}");
+  html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px;line-height:1.4}");
   html += F(".wrap{max-width:1100px;margin:28px auto;padding:0 16px}");
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
@@ -3923,6 +4026,8 @@ void handleSetupPage() {
   html += F(".card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.22)}");
   html += F(".btn:hover,.btn-alt:hover{filter:brightness(1.06)}");
   html += F("input:focus-visible,select:focus-visible{outline:2px solid #1c74d9;outline-offset:2px}");
+  html += F("a{text-decoration:none;color:inherit}");
+  html += F("@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}");
 
   // Desktop tuning
   html += F("@media(min-width:1024px){");
@@ -3940,7 +4045,7 @@ void handleSetupPage() {
 
   // Weather
   html += F("<div class='card narrow'><h3>Weather</h3>");
-  html += F("<div class='row'><label>API Key</label><input class='in-wide' type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
+  html += F("<div class='row'><label>OpenWeatherMap API Key</label><input class='in-wide' type='text' name='apiKey' value='"); html += apiKey; html += F("'></div>");
   html += F("<div class='row'><label>City ID</label><input class='in-med' type='text' name='city' value='"); html += city; html += F("'><small>OpenWeatherMap city id</small></div>");
   html += F("</div>");
 
@@ -4104,6 +4209,10 @@ void handleSetupPage() {
   html += F("<div class='row'><label>BL</label><input class='in-xs' type='number' min='-1' max='48' list='tftPinsOrNone' name='tftBl' value='");
   html += String(tftBlPin); html += F("'><small>-1 = not used</small></div>");
   html += F("<div class='row'><label>LCD Brightness (%)</label><input class='in-xs' type='number' id='tftLevel' min='0' max='100' value='100'><button class='btn' type='button' id='btn-tft-bright'>Set</button></div>");
+  html += F("<div class='row'><label>Self-Test</label><div class='field'>");
+  html += F("<button class='btn-alt' type='button' id='tftSelfTestBtn'>TFT Self-Test</button>");
+  html += F("</div></div>");
+  html += F("<div class='row helptext'><label></label><small id='tftStatusLine'>Backlight: --</small></div>");
   html += F("<div class='row helptext'><label></label><small>Changing TFT pins requires reboot. Use GPIO 1-48 excluding 19/20 (USB), 0/45/46 (strapping), 9-14 & 35-38 (flash/PSRAM).</small></div>");
   html += F("</div>");
 
@@ -4241,6 +4350,24 @@ void handleSetupPage() {
   html += F("g('btn-pause-7d')?.addEventListener('click',()=>post('/pause','sec='+(7*86400)));");
   html += F("g('btn-resume')?.addEventListener('click',()=>post('/resume','x=1'));");
   html += F("g('btn-tft-bright')?.addEventListener('click',async()=>{const v=g('tftLevel'); if(!v) return; let n=parseInt(v.value||'100'); if(isNaN(n)) n=100; n=Math.min(100,Math.max(0,n)); v.value=n; try{await post('/tft_brightness','level='+n);}catch(e){console.error(e)}});");
+  html += F("g('tftSelfTestBtn')?.addEventListener('click',async()=>{");
+  html += F("  if(!confirm('Run TFT self-test now?')) return;");
+  html += F("  try{const r=await fetch('/tft_selftest'); const t=await r.text(); alert(t||'TFT self-test done');}catch(e){alert('TFT self-test failed');}");
+  html += F("  loadTftStatus();");
+  html += F("});");
+
+  html += F("async function loadTftStatus(){");
+  html += F("  const el=g('tftStatusLine'); if(!el) return;");
+  html += F("  try{const r=await fetch('/status'); const st=await r.json();");
+  html += F("    const pin=st.tftBlPin; const pwm=!!st.tftPwm; const on=!!st.tftBlOn; const disp=!!st.tftDisplayOn;");
+  html += F("    const pct=(typeof st.tftBrightnessPct==='number')?st.tftBrightnessPct:0;");
+  html += F("    if(typeof pin==='number' && pin>=0){");
+  html += F("      const mode=pwm?'PWM':'ON/OFF'; el.textContent='Backlight: '+mode+' '+pct+'% (pin '+pin+') '+(on?'on':'off');");
+  html += F("    } else {");
+  html += F("      el.textContent='Backlight: display '+(disp?'on':'off');");
+  html += F("    }");
+  html += F("  }catch(e){ el.textContent='Backlight: --'; }");
+  html += F("}");
 
   // === Timezone loading from Nayarsystems posix_tz_db with fallback ===
   html += F("const TZ_DB_URL='https://raw.githubusercontent.com/nayarsystems/posix_tz_db/master/zones.json';");
@@ -4314,6 +4441,7 @@ void handleSetupPage() {
   html += F("}");
 
   html += F("loadTimezones();");
+  html += F("loadTftStatus();");
   // === END TZ CODE ===
 
   html += F("</script>");
