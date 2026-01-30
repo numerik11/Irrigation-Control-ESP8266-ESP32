@@ -122,7 +122,7 @@ static void drawTopBar(const char* title, const char* pill, uint16_t pillColor){
 static void fmtMMSS(char* out, size_t n, unsigned long sec){
   unsigned long m = sec / 60;
   unsigned long s = sec % 60;
-  snprintf(out, n, "%lum%02lus", m, s);
+  snprintf(out, n, "%02lum%02lus", m, s);
 }
 
 WiFiManager wifiManager;
@@ -2237,6 +2237,10 @@ void updateLCDForZone(int zone) {
   unsigned long total = zoneRunTotalSec[zone];
   if (total == 0) total = durationForSlot(zone,1);
   unsigned long rem = (elapsed<total ? total - elapsed : 0);
+  unsigned long em = elapsed / 60;
+  unsigned long es = elapsed % 60;
+  unsigned long rm = rem / 60;
+  unsigned long rs = rem % 60;
 
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextColor(ST77XX_WHITE);
@@ -2247,18 +2251,20 @@ void updateLCDForZone(int zone) {
   tft.setTextSize(2);
   tft.setCursor(10, 80);
   tft.print("Elapsed: ");
-  tft.print(elapsed/60);
+  if (em < 10) tft.print('0');
+  tft.print(em);
   tft.print(":");
-  if ((elapsed%60)<10) tft.print('0');
-  tft.print(elapsed%60);
+  if (es < 10) tft.print('0');
+  tft.print(es);
 
   tft.setCursor(10, 115);
   if (elapsed<total) {
     tft.print("Remain: ");
-    tft.print(rem/60);
+    if (rm < 10) tft.print('0');
+    tft.print(rm);
     tft.print("m ");
-    if ((rem%60)<10) tft.print('0');
-    tft.print(rem%60);
+    if (rs < 10) tft.print('0');
+    tft.print(rs);
     tft.print("s");
   } else {
     tft.print("Complete");
@@ -3341,12 +3347,13 @@ void handleRoot() {
   DeserializationError werr = deserializeJson(js, cachedWeatherData);
 
   // Safe reads
-  float temp = NAN, hum = NAN, ws = NAN, feels = NAN;
+  float temp = NAN, hum = NAN, ws = NAN, gust = NAN, feels = NAN;
   if (!werr) {
     if (js["main"]["temp"].is<float>())       temp  = js["main"]["temp"].as<float>();
     if (js["main"]["feels_like"].is<float>()) feels = js["main"]["feels_like"].as<float>();
     if (js["main"]["humidity"].is<float>())   hum   = js["main"]["humidity"].as<float>();
     if (js["wind"]["speed"].is<float>())      ws    = js["wind"]["speed"].as<float>();
+    if (js["wind"]["gust"].is<float>())       gust  = js["wind"]["gust"].as<float>();
   }
 
   String cond = werr ? "-" : String(js["weather"][0]["main"].as<const char*>());
@@ -3539,6 +3546,7 @@ html += F("</b></a></div>");
   html += F("<div class='chip'>Feels <span id='feelsChip'>"); html += (isnan(feels) ? String("--") : String(feels,1)+" C"); html += F("</span></div>");
   html += F("<div class='chip'>Humidity <span id='humChip'>");  html += (isnan(hum)  ? String("--") : String((int)hum)+" %"); html += F("</span></div>");
   html += F("<div class='chip'>Wind <span id='windChip'>"); html += (isnan(ws)   ? String("--") : String(ws,1)+" m/s"); html += F("</span></div>");
+  html += F("<div class='chip'>Gust <span id='gustChip'>"); html += (isnan(gust) ? String("--") : String(gust,1)+" m/s"); html += F("</span></div>");
   html += F("<div class='chip'>Condition <b id='cond'>");
   html += cond.length() ? cond : String("--");
   html += F("</b></div></div></div>");
@@ -3577,6 +3585,15 @@ html += F("</b></a></div>");
 
   // ---------- Schedules (collapsible) ----------
   static const char* DLBL[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+  auto pad2 = [](int v) -> String {
+    if (v < 0) v = 0;
+    if (v < 10) {
+      char b[3];
+      snprintf(b, sizeof(b), "0%d", v);
+      return String(b);
+    }
+    return String(v);
+  };
   html += F("<div class='center'><div class='card sched'>");
   html += F("<h3 class='collapse' onclick=\"const b=document.getElementById('schedBody');"
             "const a=this.querySelector('.arr');"
@@ -3603,42 +3620,42 @@ html += F("</b></a></div>");
 
     // Start 1
     html += F("<div class='rowx'><label>Start Time 1 -</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='23' name='startHour"); html += String(z);
-    html += F("' value='"); html += String(startHour[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startHour"); html += String(z);
+    html += F("' value='"); html += pad2(startHour[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='startMin"); html += String(z);
-    html += F("' value='"); html += String(startMin[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startMin"); html += String(z);
+    html += F("' value='"); html += pad2(startMin[z]); html += F("'>");
     html += F("</div></div>");
 
     // Start 2
     html += F("<div class='rowx'><label>Start Time 2 -</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='23' name='startHour2"); html += String(z);
-    html += F("' value='"); html += String(startHour2[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startHour2"); html += String(z);
+    html += F("' value='"); html += pad2(startHour2[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='startMin2"); html += String(z);
-    html += F("' value='"); html += String(startMin2[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startMin2"); html += String(z);
+    html += F("' value='"); html += pad2(startMin2[z]); html += F("'>");
     html += F("<label class='toggle-inline'><input type='checkbox' name='enableStartTime2");
     html += String(z); html += F("' "); html += (enableStartTime2[z] ? "checked" : "");
     html += F("> Enable</label></div></div>");
 
     // Duration
     html += F("<div class='rowx'><label>Run Time 1 -</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='600' name='durationMin"); html += String(z);
-    html += F("' value='"); html += String(durationMin[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,3}' maxlength='3' name='durationMin"); html += String(z);
+    html += F("' value='"); html += pad2(durationMin[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='durationSec"); html += String(z);
-    html += F("' value='"); html += String(durationSec[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='durationSec"); html += String(z);
+    html += F("' value='"); html += pad2(durationSec[z]); html += F("'>");
     html += F("<span class='unit'>s</span></div></div>");
 
     // Duration 2 (used when Start 2 fires)
     html += F("<div class='rowx dur2row' id='dur2row"); html += String(z); html += F("' style='display:");
     html += (enableStartTime2[z] ? "grid" : "none");
     html += F("'><label>Run Time 2 -</label><div class='field inline'>");
-    html += F("<input class='in' type='number' min='0' max='600' name='duration2Min"); html += String(z);
-    html += F("' value='"); html += String(duration2Min[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,3}' maxlength='3' name='duration2Min"); html += String(z);
+    html += F("' value='"); html += pad2(duration2Min[z]); html += F("'>");
     html += F("<span class='unit'>m</span><span class='sep'>:</span>");
-    html += F("<input class='in' type='number' min='0' max='59' name='duration2Sec"); html += String(z);
-    html += F("' value='"); html += String(duration2Sec[z]); html += F("'>");
+    html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='duration2Sec"); html += String(z);
+    html += F("' value='"); html += pad2(duration2Sec[z]); html += F("'>");
     html += F("'</div></div>");
 
     // Days
@@ -3721,6 +3738,7 @@ html += F("</b></a></div>");
         if (zoneActive[z]) {
           int rm = rem / 60;
           int rs = rem % 60;
+          if (rm < 10) html += F("0");
           html += String(rm);
           html += F("m ");
           if (rs < 10) html += F("0");
@@ -3746,6 +3764,7 @@ html += F("</b></a></div>");
     // Meta row: Duration
     html += F("<div class='zone-meta-row'>");
       html += F("<span class='pill-soft'><span>Run Time 1 -&nbsp;</span><b>");
+      if (durM < 10) html += F("0");
       html += String(durM);
       html += F("m ");
       if (durS < 10) html += F("0");
@@ -3756,6 +3775,7 @@ html += F("</b></a></div>");
         unsigned int d2m = d2 / 60;
         unsigned int d2s = d2 % 60;
         html += F("<span class='pill-soft'><span>Run Time 2 -&nbsp;</span><b>");
+        if (d2m < 10) html += F("0");
         html += String(d2m);
         html += F("m ");
         if (d2s < 10) html += F("0");
@@ -3888,7 +3908,7 @@ html += F("</b></a></div>");
   html += F("if(Array.isArray(st.zones)){ st.zones.forEach((z,idx)=>{");
   html += F("const stateEl=document.getElementById('zone-'+idx+'-state'); const remEl=document.getElementById('zone-'+idx+'-rem'); const barEl=document.getElementById('zone-'+idx+'-bar'); const dotEl=document.getElementById('zone-'+idx+'-dot');");
   html += F("if(stateEl){stateEl.className='badge '+(z.active?'b-ok':'');stateEl.innerHTML=z.active?'Running':'Off';} if(dotEl){dotEl.className='zone-dot'+(z.active?' on':'');}");
-  html += F("if(remEl){ if(z.active){ const r=z.remaining||0; const rm=Math.floor(r/60),rs=r%60; remEl.textContent=rm+'m '+(rs<10?'0':'')+rs+'s left'; } else remEl.textContent='--'; }");
+  html += F("if(remEl){ if(z.active){ const r=z.remaining||0; const rm=Math.floor(r/60),rs=r%60; remEl.textContent=pad(rm)+'m '+pad(rs)+'s left'; } else remEl.textContent='--'; }");
   html += F("if(barEl){ let p=0; const total=z.totalSec||0; const rem=z.remaining||0; p=total>0?Math.max(0,Math.min(100,Math.round(100*(total-rem)/total))):0; barEl.style.width=p+'%'; }");
   html += F("const onBtn=document.getElementById('zone-'+idx+'-on'); const offBtn=document.getElementById('zone-'+idx+'-off');");
   html += F("if(onBtn) onBtn.disabled=!!z.active; if(offBtn) offBtn.disabled=!z.active;");
@@ -3913,6 +3933,7 @@ html += F("</b></a></div>");
   html += F("const feelsEl=document.getElementById('feelsChip'); if(feelsEl){ const v=st.feels_like; feelsEl.textContent=(typeof v==='number')?v.toFixed(1)+' C':'--'; }");
   html += F("const humEl=document.getElementById('humChip'); if(humEl){ const v=st.humidity; humEl.textContent=(typeof v==='number')?Math.round(v)+' %':'--'; }");
   html += F("const windEl=document.getElementById('windChip'); if(windEl){ const v=st.wind; windEl.textContent=(typeof v==='number')?v.toFixed(1)+' m/s':'--'; }");
+  html += F("const gustEl=document.getElementById('gustChip'); if(gustEl){ const v=(typeof st.gustNow==='number')?st.gustNow:((typeof st.gust24h==='number')?st.gust24h:null); gustEl.textContent=(typeof v==='number')?v.toFixed(1)+' m/s':'--'; }");
 
   // keep master pill synced
   html += F("const bm=document.getElementById('btn-master'); const ms=document.getElementById('master-state');");
@@ -3921,7 +3942,7 @@ html += F("</b></a></div>");
   // Next Water
   html += F("(function(){ const zEl=document.getElementById('nwZone'); const tEl=document.getElementById('nwTime'); const eEl=document.getElementById('nwETA'); const dEl=document.getElementById('nwDur');");
   html += F("const epoch=st.nextWaterEpoch|0; const zone=st.nextWaterZone; const name=st.nextWaterName||(Number.isInteger(zone)?('Z'+(zone+1)):'--'); const dur=st.nextWaterDurSec|0;");
-  html += F("function fmtDur(s){ if(s<=0) return '--'; const m=Math.floor(s/60), sec=s%60; return m+'m '+(sec<10?'0':'')+sec+'s'; }");
+  html += F("function fmtDur(s){ if(s<=0) return '--'; const m=Math.floor(s/60), sec=s%60; return pad(m)+'m '+pad(sec)+'s'; }");
   html += F("function fmtETA(delta){ if(delta<=0) return 'now'; const h=Math.floor(delta/3600), m=Math.floor((delta%3600)/60); if(h>0) return h+'h '+m+'m'; return m+'m'; }");
   html += F("if(zEl) zEl.textContent=(zone>=0&&zone<255)?name:'--'; if(tEl) tEl.textContent=toLocalHHMM(epoch); if(dEl) dEl.textContent=fmtDur(dur);");
   html += F("let nowEpoch=(typeof st.deviceEpoch==='number'&&st.deviceEpoch>0&&_devEpoch!=null)?_devEpoch:Math.floor(Date.now()/1000);");
@@ -4454,6 +4475,11 @@ void handleSetupPage() {
 // ---------- Schedule POST (per-zone card or full form) ----------
 void handleSubmit() {
   HttpScope _scope;
+  auto clampInt = [](int v, int lo, int hi) -> int {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+  };
 
   // If onlyZone is present -> only update that zone from fields in this form
   if (server.hasArg("onlyZone")) {
@@ -4465,14 +4491,14 @@ void handleSubmit() {
         if (nm.length()) zoneNames[z]=nm;
       }
       // Times / duration
-      if (server.hasArg("startHour"+String(z)))  startHour[z]  = server.arg("startHour"+String(z)).toInt();
-      if (server.hasArg("startMin"+String(z)))   startMin[z]   = server.arg("startMin"+String(z)).toInt();
-      if (server.hasArg("startHour2"+String(z))) startHour2[z] = server.arg("startHour2"+String(z)).toInt();
-      if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
-      if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
-      if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
-      if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
-      if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
+      if (server.hasArg("startHour"+String(z)))  startHour[z]  = clampInt(server.arg("startHour"+String(z)).toInt(), 0, 23);
+      if (server.hasArg("startMin"+String(z)))   startMin[z]   = clampInt(server.arg("startMin"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("startHour2"+String(z))) startHour2[z] = clampInt(server.arg("startHour2"+String(z)).toInt(), 0, 23);
+      if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = clampInt(server.arg("startMin2"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("durationMin"+String(z))) durationMin[z]=clampInt(server.arg("durationMin"+String(z)).toInt(), 0, 600);
+      if (server.hasArg("durationSec"+String(z))) durationSec[z]=clampInt(server.arg("durationSec"+String(z)).toInt(), 0, 59);
+      if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=clampInt(server.arg("duration2Min"+String(z)).toInt(), 0, 600);
+      if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=clampInt(server.arg("duration2Sec"+String(z)).toInt(), 0, 59);
       enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
       // Days
       for (int d=0; d<7; d++) days[z][d] = server.hasArg("day"+String(z)+"_"+String(d));
@@ -4490,14 +4516,14 @@ void handleSubmit() {
       String nm=cleanName(server.arg("zoneName"+String(z)));
       if (nm.length()) zoneNames[z]=nm;
     }
-    if (server.hasArg("startHour"+String(z)))  startHour[z]  = server.arg("startHour"+String(z)).toInt();
-    if (server.hasArg("startMin"+String(z)))   startMin[z]   = server.arg("startMin"+String(z)).toInt();
-    if (server.hasArg("startHour2"+String(z))) startHour2[z] = server.arg("startHour2"+String(z)).toInt();
-    if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = server.arg("startMin2"+String(z)).toInt();
-    if (server.hasArg("durationMin"+String(z))) durationMin[z]=server.arg("durationMin"+String(z)).toInt();
-    if (server.hasArg("durationSec"+String(z))) durationSec[z]=server.arg("durationSec"+String(z)).toInt();
-    if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=server.arg("duration2Min"+String(z)).toInt();
-    if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=server.arg("duration2Sec"+String(z)).toInt();
+    if (server.hasArg("startHour"+String(z)))  startHour[z]  = clampInt(server.arg("startHour"+String(z)).toInt(), 0, 23);
+    if (server.hasArg("startMin"+String(z)))   startMin[z]   = clampInt(server.arg("startMin"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("startHour2"+String(z))) startHour2[z] = clampInt(server.arg("startHour2"+String(z)).toInt(), 0, 23);
+    if (server.hasArg("startMin2"+String(z)))  startMin2[z]  = clampInt(server.arg("startMin2"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("durationMin"+String(z))) durationMin[z]=clampInt(server.arg("durationMin"+String(z)).toInt(), 0, 600);
+    if (server.hasArg("durationSec"+String(z))) durationSec[z]=clampInt(server.arg("durationSec"+String(z)).toInt(), 0, 59);
+    if (server.hasArg("duration2Min"+String(z))) duration2Min[z]=clampInt(server.arg("duration2Min"+String(z)).toInt(), 0, 600);
+    if (server.hasArg("duration2Sec"+String(z))) duration2Sec[z]=clampInt(server.arg("duration2Sec"+String(z)).toInt(), 0, 59);
     enableStartTime2[z] = server.hasArg("enableStartTime2"+String(z));
   }
   saveSchedule(); saveConfig();
