@@ -3611,13 +3611,17 @@ html += F("</b></a></div>");
     html += F("' value='"); html += pad2(startMin[z]); html += F("'>");
     html += F("</div></div>");
 
-    // Start 2
+    // Start 2 (hide inputs unless enabled)
     html += F("<div class='rowx'><label>Start Time 2 -</label><div class='field inline'>");
+    html += F("<span id='start2fields"); html += String(z); html += F("' style='display:");
+    html += (enableStartTime2[z] ? "inline-flex" : "none");
+    html += F(";align-items:center;gap:8px'>");
     html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startHour2"); html += String(z);
     html += F("' value='"); html += pad2(startHour2[z]); html += F("'>");
     html += F("<span class='sep'>:</span>");
     html += F("<input class='in' type='text' inputmode='numeric' pattern='[0-9]{1,2}' maxlength='2' name='startMin2"); html += String(z);
     html += F("' value='"); html += pad2(startMin2[z]); html += F("'>");
+    html += F("</span>");
     html += F("<label class='toggle-inline'><input type='checkbox' name='enableStartTime2");
     html += String(z); html += F("' "); html += (enableStartTime2[z] ? "checked" : "");
     html += F("> Enable</label></div></div>");
@@ -3951,8 +3955,9 @@ html += F("</b></a></div>");
   html += F("for(let z=0; z<ZC; z++){");
   html += F("  const cb=document.querySelector(`[name='enableStartTime2${z}']`);");
   html += F("  const row=document.getElementById('dur2row'+z);");
+  html += F("  const s2=document.getElementById('start2fields'+z);");
   html += F("  if(!cb||!row) continue;");
-  html += F("  const sync=()=>{row.style.display=cb.checked?'grid':'none';};");
+  html += F("  const sync=()=>{row.style.display=cb.checked?'grid':'none'; if(s2) s2.style.display=cb.checked?'inline-flex':'none';};");
   html += F("  cb.addEventListener('change', sync); sync();");
   html += F("}");
 
