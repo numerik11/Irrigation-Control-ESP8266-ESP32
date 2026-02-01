@@ -1,24 +1,26 @@
-ESP32 1–16 Zone Smart Irrigation Controller
+[🌱 ESP32 1–16 Zone Smart Irrigation Controller
 
-A feature-rich, ESP32-based irrigation controller designed to manage 1–16 solenoid zones, with automatic tank / mains water source selection, live weather integration, and a modern local web interface at:
+A feature-rich ESP32-based irrigation controller designed to manage 1–16 solenoid zones, with automatic tank / mains water source selection, live weather integration, and a modern local web interface:
 
 👉 http://espirrigation.local
 
-Built for reliability, flexibility, and real-world garden setups — from small residential systems to multi-zone installations.
+Built for reliability, flexibility, and real-world garden setups — from small residential systems to large multi-zone installations.
 
 ✨ Key Highlights
 
 1–16 irrigation zones
 
-Automatic Tank ↔ Mains selection
+Automatic Tank ↔ Mains water source selection
 
 Live OpenWeather integration
 
 Rain & wind-aware scheduling
 
-Web UI + optional TFT / OLED / LCD displays
+Modern web UI
 
-KC868-A board support with GPIO fallback*
+Optional TFT / OLED / LCD displays
+
+KC868-A board support with GPIO fallback
 
 ESP32-S3 recommended (ESP8266 also supported)
 
@@ -47,12 +49,12 @@ All variants share the same firmware features and web UI.
 
 🌦 Weather Integration
 
-Uses the free OpenWeatherMap API:
+Uses the free OpenWeatherMap API.
 
 🔑 Sign up for an API key:
 https://home.openweathermap.org/users/sign_up
 
-Live weather data
+Live Weather Data
 
 Temperature
 
@@ -60,15 +62,15 @@ Humidity
 
 Wind speed
 
-Conditions (rain, drizzle, thunderstorm)
+Conditions (Rain / Drizzle / Thunderstorm)
 
-Smart delays
+Smart Delays
 
 Rain delay (sensor or weather-based)
 
 Wind delay (configurable m/s threshold)
 
-Rain cooldown & 24-hour rainfall limits
+Rain cooldown and 24-hour rainfall limits
 
 Rolling rainfall totals (1h / 24h)
 
@@ -76,7 +78,7 @@ Rolling rainfall totals (1h / 24h)
 
 Tank level (%)
 
-Auto: Tank / Auto: Mains / Forced mode
+Auto: Tank / Auto: Mains / Forced
 
 Live weather snapshot
 
@@ -108,11 +110,11 @@ Minute + second precision
 
 Per-zone duration
 
-Overlapping mode
+Overlapping modes
 
-Run sequentially or
+Sequential (default)
 
-Run concurrently (power supply permitting)
+Concurrent (power supply permitting)
 
 Editable zone names
 
@@ -120,7 +122,7 @@ Stored directly on ESP32
 
 🔌 Hardware & I/O
 
-KC868-A support*
+KC868-A support
 
 PCF8574 @ 0x24 (relays)
 
@@ -130,7 +132,7 @@ Automatic I²C detection
 
 Falls back to GPIO mode if expanders not found
 
-Configurable pins
+Fully configurable pins
 
 Zones, tank, mains, sensors, polarity
 
@@ -142,7 +144,9 @@ SPI TFT or I²C OLED (optional)
 
 Backlight control
 
-Photoresistor + 100k resistor (auto-off when enclosure closed)
+Photoresistor + 100k resistor
+
+Auto-off when enclosure door is closed
 
 🌐 Networking & UX
 
@@ -168,7 +172,7 @@ Downloadable via web UI
 
 ⚙ Behaviour & Safety Logic
 
-Watering is cancelled (and logged) if blocked by:
+Watering is cancelled and logged if blocked by:
 
 Rain delay
 
@@ -178,19 +182,19 @@ Master off
 
 Cooldown period
 
-Manual zone activation respects all safety rules
+Manual zone activation respects the same safety rules.
 
-Wind delay behaviour
+Wind Delay Behaviour
 
-Scheduled watering waits
+Scheduled watering waits while wind exceeds threshold
 
-Automatically resumes once wind drops below threshold
+Automatically resumes once wind drops below limit
 
 📦 Requirements
 
-Wi-Fi connectivity
+Reliable Wi-Fi connection
 
-ESP32 board (ESP32-S3 or KC868-A* recommended)
+ESP32 board (ESP32-S3 or KC868-A recommended)
 
 1–16 relay module (if not using KC868)
 
@@ -250,11 +254,11 @@ Select board:
 
 ESP32 Dev Module (KC868-A6 compatible)
 
-Partition Scheme
+Set partition scheme:
 
 Large APP (4MB)
 
-KC868-A* Library
+KC868-A Library
 
 Download Kincony PCF8574 library:
 https://www.kincony.com/forum/attachment.php?aid=1697
@@ -281,8 +285,7 @@ Path	Description
 /stopall	Stop all zones
 /valve/on/<z>	Start zone
 /valve/off/<z>	Stop zone
-/reboot	Reboot
-
+/reboot	Reboot controller
 📸 Screenshots
 -Main Page
 
@@ -313,3 +316,4 @@ Path	Description
 
 
 
+](https://chatgpt.com/s/t_697f1dbc25b08191b79a3ae1194a1677)
