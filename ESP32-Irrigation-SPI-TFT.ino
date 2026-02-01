@@ -209,7 +209,6 @@ bool enableStartTime2[MAX_ZONES] = {false};
 bool days[MAX_ZONES][7] = {{false}};
 bool zoneActive[MAX_ZONES] = {false};
 bool pendingStart[MAX_ZONES] = {false};
-int  windQueuedZone = -1;  // most recent scheduled zone delayed by wind
 uint8_t lastStartSlot[MAX_ZONES] = {1}; // 1=primary, 2=secondary
 
 bool     windActive = false;
@@ -1602,7 +1601,7 @@ void loop() {
           // Cancel when blocked/rain; queue during wind so it can run later.
           if (isBlockedNow()) { cancelStart(z, "BLOCKED", false); continue; }
           if (rainActive)     { cancelStart(z, "RAIN",    true ); continue; }
-          if (windActive)     { windQueuedZone = z; logEvent(z,"QUEUED","WIND",false); continue; }
+          if (windActive)     { pendingStart[z] = true; logEvent(z,"QUEUED","WIND",false); continue; }
 
           if (!runZonesConcurrent) {
             // sequential: only start if nothing is running; else queue (still allowed)
@@ -1614,19 +1613,6 @@ void loop() {
           }
         }
         if (zoneActive[z] && hasDurationCompleted(z)) turnOffZone(z);
-      }
-
-      // Wind-delayed: start only the most recent scheduled zone when clear
-      if (!rainActive && !windActive && windQueuedZone >= 0) {
-        int wz = windQueuedZone;
-        windQueuedZone = -1;
-        if (!runZonesConcurrent && anyActive) {
-          pendingStart[wz] = true;
-          logEvent(wz, "QUEUED", "ACTIVE RUN", false);
-        } else {
-          turnOnZone(wz);
-          anyActive = true;
-        }
       }
 
       if (!runZonesConcurrent) {
@@ -3073,7 +3059,7 @@ void turnOnZone(int z) {
 
   if (isBlockedNow())  { cancelStart(z, "BLOCKED", false); return; }
   if (rainActive)      { cancelStart(z, "RAIN",    true ); return; }
-  if (windActive)      { cancelStart(z, "WIND",    false); return; }
+  if (windActive)      { pendingStart[z] = true; logEvent(z, "QUEUED", "WIND", false); return; }
 
   const bool usePcf = useExpanderForZone(z);
   if (!usePcf) {
@@ -3216,10 +3202,10 @@ void turnOnValveManual(int z) {
     }
   }
 
-  // cancel manual requests during block/delay instead of queueing
+  // Cancel manual requests during block/rain; queue during wind
   if (isBlockedNow())  { cancelStart(z, "BLOCKED", false); return; }
   if (rainActive)      { cancelStart(z, "RAIN",    true ); return; }
-  if (windActive)      { cancelStart(z, "WIND",    false); return; }
+  if (windActive)      { lastStartSlot[z] = 1; pendingStart[z] = true; logEvent(z, "QUEUED", "WIND", false); return; }
 
   zoneStartMs[z] = millis();
   zoneActive[z] = true;
