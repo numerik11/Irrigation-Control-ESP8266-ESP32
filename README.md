@@ -46,10 +46,10 @@ Lightweight option using common **16×2 or 20×4 LCDs**.
 
 ## 🌦 Weather Integration
 
-Uses the **free OpenWeatherMap API**.
-
-🔑 Sign up for an API key:
-[https://home.openweathermap.org/users/sign_up](https://home.openweathermap.org/users/sign_up)
+* Goto: https://open-meteo.com/en/docs
+* Enter your Latitude and longitude in Setup.
+* Save.  
+<img width="1030" height="173" alt="image" src="https://github.com/user-attachments/assets/a4094761-555c-4059-bfe3-a7f00c617894" />
 
 ### Live Weather Data
 
