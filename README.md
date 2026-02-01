@@ -1,292 +1,274 @@
-[🌱 ESP32 1–16 Zone Smart Irrigation Controller
+Here is your content **cleanly formatted as a proper GitHub `README.md`**, with correct Markdown, consistent headings, lists, tables, and code blocks.
+You can paste this **directly into GitHub** and it will render correctly.
 
-A feature-rich ESP32-based irrigation controller designed to manage 1–16 solenoid zones, with automatic tank / mains water source selection, live weather integration, and a modern local web interface:
+---
 
-👉 http://espirrigation.local
+# 🌱 ESP32 1–16 Zone Smart Irrigation Controller
 
-Built for reliability, flexibility, and real-world garden setups — from small residential systems to large multi-zone installations.
+A **feature-rich ESP32-based irrigation controller** designed to manage **1–16 solenoid zones**, with automatic **tank / mains water source selection**, **live weather integration**, and a modern **local web interface**:
 
-✨ Key Highlights
+👉 **[http://espirrigation.local](http://espirrigation.local)**
 
-1–16 irrigation zones
+Built for **reliability, flexibility, and real-world garden setups** — from small residential systems to large multi-zone installations.
 
-Automatic Tank ↔ Mains water source selection
+---
 
-Live OpenWeather integration
+## ✨ Key Highlights
 
-Rain & wind-aware scheduling
+* **1–16 irrigation zones**
+* **Automatic Tank ↔ Mains water source selection**
+* **Live OpenWeather integration**
+* **Rain & wind-aware scheduling**
+* **Modern web UI**
+* **Optional TFT / OLED / LCD displays**
+* **KC868-A board support with GPIO fallback**
+* **ESP32-S3 recommended (ESP8266 also supported)**
 
-Modern web UI
+---
 
-Optional TFT / OLED / LCD displays
+## 🖥 Supported Hardware Variants
 
-KC868-A board support with GPIO fallback
-
-ESP32-S3 recommended (ESP8266 also supported)
-
-🖥 Supported Hardware Variants
-ESP32 + 240×320 SPI TFT
+### ESP32 + 240×320 SPI TFT
 
 Full-colour on-device interface showing:
 
-System status
+* System status
+* Active zones
+* Rain / wind delays
+* Water source state
 
-Active zones
-
-Rain / wind delays
-
-Water source state
-
-ESP32 + I²C OLED
+### ESP32 + I²C OLED
 
 Compact, low-pin-count display ideal for small enclosures.
 
-ESP8266 + I²C LCD
+### ESP8266 + I²C LCD
 
-Lightweight option using common 16×2 or 20×4 LCDs.
+Lightweight option using common **16×2 or 20×4 LCDs**.
 
-All variants share the same firmware features and web UI.
+> All variants share the **same firmware features and web UI**.
 
-🌦 Weather Integration
+---
 
-Uses the free OpenWeatherMap API.
+## 🌦 Weather Integration
+
+Uses the **free OpenWeatherMap API**.
 
 🔑 Sign up for an API key:
-https://home.openweathermap.org/users/sign_up
+[https://home.openweathermap.org/users/sign_up](https://home.openweathermap.org/users/sign_up)
 
-Live Weather Data
+### Live Weather Data
 
-Temperature
+* Temperature
+* Humidity
+* Wind speed
+* Conditions (Rain / Drizzle / Thunderstorm)
 
-Humidity
+### Smart Delays
 
-Wind speed
+* Rain delay (sensor or weather-based)
+* Wind delay (configurable m/s threshold)
+* Rain cooldown and 24-hour rainfall limits
+* Rolling rainfall totals (1h / 24h)
 
-Conditions (Rain / Drizzle / Thunderstorm)
+---
 
-Smart Delays
+## 📊 Dashboard Features
 
-Rain delay (sensor or weather-based)
+* **Tank level (%)**
 
-Wind delay (configurable m/s threshold)
+  * Auto: Tank / Auto: Mains / Forced
+* **Live weather snapshot**
+* **Next Water**
 
-Rain cooldown and 24-hour rainfall limits
+  * Zone, start time, duration, ETA
+* **Active delay status**
 
-Rolling rainfall totals (1h / 24h)
+  * Rain / Wind cause
+* **Zone cards**
 
-📊 Dashboard Features
+  * Progress bars
+  * Manual On / Off control
 
-Tank level (%)
+---
 
-Auto: Tank / Auto: Mains / Forced
+## ⏱ Zones & Scheduling
 
-Live weather snapshot
+* **1–16 zones**
+* **Two start times per zone**
 
-Next Water
+  * Optional second start with separate duration
+* **7-day scheduling**
+* **Minute + second precision**
+* **Per-zone duration**
+* **Overlapping modes**
 
-Zone, start time, duration, ETA
+  * Sequential (default)
+  * Concurrent (power supply permitting)
+* **Editable zone names**
 
-Active delay status
+  * Stored directly on ESP32
 
-Rain / Wind cause
+---
 
-Zone cards
+## 🔌 Hardware & I/O
 
-Progress bars
+* **KC868-A support**
 
-Manual On / Off control
+  * PCF8574 @ `0x24` (relays)
+  * PCF8574 @ `0x22` (inputs)
+* **Automatic I²C detection**
 
-⏱ Zones & Scheduling
+  * Falls back to GPIO mode if expanders not found
+* **Fully configurable pins**
 
-1–16 zones
+  * Zones, tank, mains, sensors, polarity
+  * Changes applied after reboot
+* **Displays**
 
-Two start times per zone
+  * SPI TFT or I²C OLED (optional)
+* **Backlight control**
 
-Optional second start with separate duration
+  * Photoresistor + 100k resistor
+  * Auto-off when enclosure door is closed
 
-7-day scheduling
+---
 
-Minute + second precision
+## 🌐 Networking & UX
 
-Per-zone duration
+* **WiFiManager captive portal**
 
-Overlapping modes
+  * SSID: `ESPIrrigationAP`
+* **mDNS**
 
-Sequential (default)
+  * [http://espirrigation.local/](http://espirrigation.local/)
+* **OTA updates**
 
-Concurrent (power supply permitting)
+  * Hostname: `ESP32-Irrigation`
+* **Event logging**
 
-Editable zone names
+  * CSV format
+  * Includes weather snapshot per event
+  * Downloadable via web UI
 
-Stored directly on ESP32
+---
 
-🔌 Hardware & I/O
+## ⚙ Behaviour & Safety Logic
 
-KC868-A support
+Watering is **cancelled and logged** if blocked by:
 
-PCF8574 @ 0x24 (relays)
+* Rain delay
+* Wind delay
+* Master off
+* Cooldown period
 
-PCF8574 @ 0x22 (inputs)
+Manual zone activation **respects the same safety rules**.
 
-Automatic I²C detection
+### Wind Delay Behaviour
 
-Falls back to GPIO mode if expanders not found
+* Scheduled watering waits while wind exceeds threshold
+* Automatically resumes once wind drops below limit
 
-Fully configurable pins
+---
 
-Zones, tank, mains, sensors, polarity
+## 📦 Requirements
 
-Changes applied after reboot
+* Reliable **Wi-Fi connection**
+* **ESP32 board** (ESP32-S3 or KC868-A recommended)
+* **1–16 relay module** (if not using KC868)
+* **Tank level sensor**
 
-Displays
+  * 0–3.3 V analog output
+* **Solenoid power supply**
 
-SPI TFT or I²C OLED (optional)
+  * ~10 W per solenoid
+  * 12 V DC or 12/24 V AC
+* **OpenWeatherMap API key**
 
-Backlight control
+---
 
-Photoresistor + 100k resistor
+## 🧰 Typical Materials
 
-Auto-off when enclosure door is closed
+* KC868-A6 **or** ESP32 dev board + relay module
+* 1–16 irrigation solenoids
+* 7-core irrigation cable
+* Tank level sensor
+* External solenoid power supply
 
-🌐 Networking & UX
+---
 
-WiFiManager captive portal
+## 🔧 Typical Wiring
 
-SSID: ESPIrrigationAP
+* Tie all solenoid returns to supply **GND / COM**
+* Feed **12/24 V** into each relay **COM**
+* Solenoid hot lead → **Relay N.O.**
+* Relays 1–4 → Zones 1–4
+* Relay 5 → Mains valve
+* Relay 6 → Tank valve
+* Tank sensor → **IO36 (A1)** *(≤ 3.3 V!)*
+* Rain sensor → **IO27** *(configurable)*
 
-mDNS
+---
 
-http://espirrigation.local/
+## 🚀 Flashing & Setup
 
-OTA updates
-
-Hostname: ESP32-Irrigation
-
-Event logging
-
-CSV format
-
-Includes weather snapshot per event
-
-Downloadable via web UI
-
-⚙ Behaviour & Safety Logic
-
-Watering is cancelled and logged if blocked by:
-
-Rain delay
-
-Wind delay
-
-Master off
-
-Cooldown period
-
-Manual zone activation respects the same safety rules.
-
-Wind Delay Behaviour
-
-Scheduled watering waits while wind exceeds threshold
-
-Automatically resumes once wind drops below limit
-
-📦 Requirements
-
-Reliable Wi-Fi connection
-
-ESP32 board (ESP32-S3 or KC868-A recommended)
-
-1–16 relay module (if not using KC868)
-
-Tank level sensor
-
-0–3.3 V analog output
-
-Solenoid power supply
-
-~10 W per solenoid
-
-12 V DC or 12/24 V AC
-
-OpenWeatherMap API key
-
-🧰 Typical Materials
-
-KC868-A6 or ESP32 dev board + relay module
-
-1–16 irrigation solenoids
-
-7-core irrigation cable
-
-Tank level sensor
-
-External solenoid power supply
-
-🔧 Typical Wiring
-
-Tie all solenoid returns to supply GND / COM
-
-Feed 12/24 V into each relay COM
-
-Solenoid hot lead → Relay N.O.
-
-Relays 1–4 → Zones 1–4
-
-Relay 5 → Mains valve
-
-Relay 6 → Tank valve
-
-Tank sensor → IO36 (A1) (≤ 3.3 V!)
-
-Rain sensor → IO27 (configurable)
-
-🚀 Flashing & Setup
-Arduino IDE Setup
+### Arduino IDE Setup
 
 Add ESP32 boards:
 
+```text
 https://dl.espressif.com/dl/package_esp32_index.json
+```
 
-
-Install ESP32 by Espressif Systems
+Install **ESP32 by Espressif Systems**
 
 Select board:
 
-ESP32 Dev Module (KC868-A6 compatible)
+* **ESP32 Dev Module** (KC868-A6 compatible)
 
 Set partition scheme:
 
+```text
 Large APP (4MB)
+```
 
-KC868-A Library
+---
+
+### KC868-A Library
 
 Download Kincony PCF8574 library:
-https://www.kincony.com/forum/attachment.php?aid=1697
+[https://www.kincony.com/forum/attachment.php?aid=1697](https://www.kincony.com/forum/attachment.php?aid=1697)
 
-📡 First-Run Wi-Fi
+---
 
-Connect to ESPIrrigationAP
+## 📡 First-Run Wi-Fi
 
-Or browse to: http://192.168.4.1
+1. Connect to **ESPIrrigationAP**
+2. Or browse to: [http://192.168.4.1]
+3. Enter Wi-Fi credentials
+4. Device reboots and joins your network
 
-Enter Wi-Fi credentials
+---
 
-Device reboots and joins your network
+## 🌍 Web Endpoints
 
-🌍 Web Endpoints
-Path	Description
-/	Dashboard
-/setup	Configuration
-/status	JSON status
-/events	Event log
-/tank	Tank calibration
-/download/events.csv	Event CSV
-/i2c-test	Relay test
-/stopall	Stop all zones
-/valve/on/<z>	Start zone
-/valve/off/<z>	Stop zone
-/reboot	Reboot controller
-📸 Screenshots
+| Path                   | Description       |
+| ---------------------- | ----------------- |
+| `/`                    | Dashboard         |
+| `/setup`               | Configuration     |
+| `/status`              | JSON status       |
+| `/events`              | Event log         |
+| `/tank`                | Tank calibration  |
+| `/download/events.csv` | Event CSV         |
+| `/i2c-test`            | Relay test        |
+| `/stopall`             | Stop all zones    |
+| `/valve/on/<z>`        | Start zone        |
+| `/valve/off/<z>`       | Stop zone         |
+| `/reboot`              | Reboot controller |
+
+---
+
+## 📸 Screenshots
+
 -Main Page
 
 <img width="870" height="939" alt="image" src="https://github.com/user-attachments/assets/067be7c3-5128-4438-ae53-19e2e26ac221" />
