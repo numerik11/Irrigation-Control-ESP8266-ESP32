@@ -12,7 +12,6 @@ Built for **reliability, flexibility, and real-world garden setups** — from sm
 
 * **1–16 irrigation zones**
 * **Automatic Tank ↔ Mains water source selection**
-* **Live OpenWeather integration**
 * **Rain & wind-aware scheduling**
 * **Modern web UI**
 * **Optional TFT / OLED / LCD displays**
@@ -52,9 +51,14 @@ Lightweight option using common **16×2 or 20×4 LCDs**.
 ### Live Weather Data
 
 * Temperature
+* Feels like
 * Humidity
 * Wind speed
-* Conditions (Rain / Clear / Thunderstorm ect.)
+* Rain mm 1hr/24hr
+* High/Low
+* Pressure
+* SunUp/Down
+* Condition (Rain / Clear / Thunderstorm ect.)
 
 ### Smart Delays
 
