@@ -39,8 +39,10 @@ extern "C" {
 // ---------- Hardware ----------
 static const uint8_t MAX_ZONES = 16;
 
-constexpr uint8_t I2C_SDA = 8;   //8 for s3
-constexpr uint8_t I2C_SCL = 9;  //9 for s3
+static const int I2C_SDA_DEFAULT = 8;
+static const int I2C_SCL_DEFAULT = 9;
+static int i2cSdaPin = I2C_SDA_DEFAULT;
+static int i2cSclPin = I2C_SCL_DEFAULT;
  
 #ifndef STATUS_PIXEL_PIN
 #define STATUS_PIXEL_PIN 48   // // ESP32-S3 DevKitC-1 onboard WS2812; set -1 to disable
@@ -48,8 +50,8 @@ constexpr uint8_t I2C_SCL = 9;  //9 for s3
 static const uint8_t STATUS_PIXEL_COUNT = 1;
 
 TwoWire I2Cbus = TwoWire(0);
-PCF8574 pcfIn (&I2Cbus, 0x22, I2C_SDA, I2C_SCL);
-PCF8574 pcfOut(&I2Cbus, 0x24, I2C_SDA, I2C_SCL);
+PCF8574 pcfIn (&I2Cbus, 0x22, I2C_SDA_DEFAULT, I2C_SCL_DEFAULT);
+PCF8574 pcfOut(&I2Cbus, 0x24, I2C_SDA_DEFAULT, I2C_SCL_DEFAULT);
 Adafruit_NeoPixel statusPixel(STATUS_PIXEL_COUNT, STATUS_PIXEL_PIN, NEO_GRB + NEO_KHZ800);
 bool statusPixelReady = false;
 
@@ -102,6 +104,7 @@ const unsigned long MANUAL_BTN_DEBOUNCE_MS = 60;
 float  meteoLat = NAN;
 float  meteoLon = NAN;
 String meteoLocation; // Open-Meteo display label (optional)
+String meteoModel = "gfs"; // Open-Meteo model endpoint
 String cachedWeatherData;
 
 // Weather cache / metrics
@@ -266,6 +269,8 @@ void showManualSelection();
 void drawManualSelection();
 void statusPixelSet(uint8_t r,uint8_t g,uint8_t b);
 void updateStatusPixel();
+inline bool isValidGpioPin(int pin);
+static void sanitizePinConfig();
 
 
 // ===================== Timezone config =====================
@@ -403,6 +408,27 @@ static String cleanName(String s) {
   return s;
 }
 
+static String cleanMeteoModel(String s) {
+  s.trim();
+  s.toLowerCase();
+  String out; out.reserve(s.length());
+  for (size_t i = 0; i < s.length(); ++i) {
+    char c = s[i];
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+      out += c;
+    }
+  }
+  if (!out.length()) out = "gfs";
+  return out;
+}
+
+static bool isKnownMeteoModel(const String& s) {
+  return (s == "gfs" || s == "icon" || s == "ecmwf" || s == "meteofrance" ||
+          s == "jma" || s == "cma" || s == "gem" || s == "icon_seamless" ||
+          s == "icon_global" || s == "icon_eu" || s == "bom" ||
+          s == "bom_access_global" || s == "ukmo_seamless");
+}
+
 static inline bool isValidLatLon(float lat, float lon) {
   return isfinite(lat) && isfinite(lon) && lat >= -90.0f && lat <= 90.0f && lon >= -180.0f && lon <= 180.0f;
 }
@@ -502,6 +528,15 @@ static time_t parseLocalIsoTime(const char* s) {
 inline bool isValidAdcPin(int pin) {
   // Generic guard for ESP32 family (0..39 are GPIO-capable)
   return (pin >= 0 && pin <= 39);
+}
+
+inline bool isValidGpioPin(int pin) {
+  return (pin >= 0 && pin <= 48);
+}
+
+static void sanitizePinConfig() {
+  if (!isValidGpioPin(i2cSdaPin)) i2cSdaPin = I2C_SDA_DEFAULT;
+  if (!isValidGpioPin(i2cSclPin)) i2cSclPin = I2C_SCL_DEFAULT;
 }
 
 int tankPercent() {
@@ -782,7 +817,7 @@ void setup() {
   esp_log_level_set("i2c_master", ESP_LOG_NONE);
 
   // I2C bus
-  I2Cbus.begin(I2C_SDA, I2C_SCL, 100000);
+  I2Cbus.begin(i2cSdaPin, i2cSclPin, 100000);
   I2Cbus.setTimeOut(20);
 
   bootMillis = millis();
@@ -798,6 +833,7 @@ void setup() {
 
   // Config + schedule
   loadConfig();
+  sanitizePinConfig();
   if (!LittleFS.exists("/schedule.txt")) saveSchedule();
   loadSchedule();
   initManualButtons();
@@ -1446,10 +1482,12 @@ String fetchWeather() {
   WiFiClientSecure secure;
   secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
   http.setTimeout(2500); // NEW: shorter timeout
+  String model = cleanMeteoModel(meteoModel);
   String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(meteoLat,6) +
                "&longitude=" + String(meteoLon,6) +
-               "&current=temperature_2m,relative_humidity_2m,apparent_temperature,pressure_msl,"
+               "&current=temperature_2m,relative_humidity_2m,apparent_temperature,pressure_msl,surface_pressure,"
                "wind_speed_10m,wind_gusts_10m,precipitation,weather_code" +
+               "&models=" + model +
                "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
                "&timezone=auto";
   http.begin(secure,url);
@@ -1470,11 +1508,13 @@ String fetchForecast(float lat, float lon) {
   secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
   http.setTimeout(3000); // NEW: shorter timeout
 
+  String model = cleanMeteoModel(meteoModel);
   String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat,6) +
                "&longitude=" + String(lon,6) +
                "&hourly=precipitation,precipitation_probability,wind_gusts_10m" +
                "&daily=temperature_2m_min,temperature_2m_max,sunrise,sunset" +
                "&forecast_hours=24&forecast_days=2" +
+               "&models=" + model +
                "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
                "&timezone=auto";
 
@@ -2834,6 +2874,11 @@ html += F("</b></a></div>");
   html += F("  cb.addEventListener('change', sync); sync();");
   html += F("}");
 
+  // Weather model: toggle custom input
+  html += F("const modelSel=document.getElementById('meteoModelSelect'); const customRow=document.getElementById('meteoModelCustomRow');");
+  html += F("if(modelSel && customRow){ const syncModel=()=>{ customRow.style.display=(modelSel.value==='custom')?'flex':'none'; };");
+  html += F("modelSel.addEventListener('change', syncModel); syncModel(); }");
+
   html += F("</script></body></html>");
   flush();
   server.sendContent("");
@@ -2926,9 +2971,32 @@ void handleSetupPage() {
 
   // Weather
   html += F("<div class='card narrow'><h3>Weather (Open-Meteo)</h3>");
+  String modelSel = cleanMeteoModel(meteoModel);
+  bool modelIsKnown = isKnownMeteoModel(modelSel);
   html += F("<div class='row'><label>Location Name</label><input class='in-wide' type='text' name='meteoLocation' value='"); html += meteoLocation; html += F("'><small>Optional label for UI/logs</small></div>");
   html += F("<div class='row'><label>Latitude</label><input class='in-med' type='text' name='meteoLat' value='"); html += latStr; html += F("'><small>e.g. -34.9285</small></div>");
   html += F("<div class='row'><label>Longitude</label><input class='in-med' type='text' name='meteoLon' value='"); html += lonStr; html += F("'><small>e.g. 138.6007</small></div>");
+  html += F("<div class='row'><label>Model</label><select class='in-med' name='meteoModelSelect' id='meteoModelSelect'>");
+  html += F("<option value='gfs'");           html += (modelSel == "gfs" ? " selected" : ""); html += F(">gfs</option>");
+  html += F("<option value='icon'");          html += (modelSel == "icon" ? " selected" : ""); html += F(">icon</option>");
+  html += F("<option value='ecmwf'");         html += (modelSel == "ecmwf" ? " selected" : ""); html += F(">ecmwf</option>");
+  html += F("<option value='meteofrance'");   html += (modelSel == "meteofrance" ? " selected" : ""); html += F(">meteofrance</option>");
+  html += F("<option value='jma'");           html += (modelSel == "jma" ? " selected" : ""); html += F(">jma</option>");
+  html += F("<option value='cma'");           html += (modelSel == "cma" ? " selected" : ""); html += F(">cma</option>");
+  html += F("<option value='gem'");           html += (modelSel == "gem" ? " selected" : ""); html += F(">gem</option>");
+  html += F("<option value='icon_seamless'"); html += (modelSel == "icon_seamless" ? " selected" : ""); html += F(">icon_seamless</option>");
+  html += F("<option value='icon_global'");   html += (modelSel == "icon_global" ? " selected" : ""); html += F(">icon_global</option>");
+  html += F("<option value='icon_eu'");       html += (modelSel == "icon_eu" ? " selected" : ""); html += F(">icon_eu</option>");
+  html += F("<option value='bom'");           html += (modelSel == "bom" ? " selected" : ""); html += F(">bom</option>");
+  html += F("<option value='bom_access_global'"); html += (modelSel == "bom_access_global" ? " selected" : ""); html += F(">bom_access_global</option>");
+  html += F("<option value='ukmo_seamless'"); html += (modelSel == "ukmo_seamless" ? " selected" : ""); html += F(">ukmo_seamless</option>");
+  html += F("<option value='custom'");        html += (!modelIsKnown ? " selected" : ""); html += F(">custom</option>");
+  html += F("</select><small>Open-Meteo model endpoint</small></div>");
+  html += F("<div class='row' id='meteoModelCustomRow' style='display:");
+  html += (modelIsKnown ? "none" : "flex");
+  html += F("'><label>Custom Model</label><input class='in-med' type='text' name='meteoModelCustom' value='");
+  html += (modelIsKnown ? "" : modelSel);
+  html += F("'><small>Use an Open-Meteo model slug</small></div>");
   html += F("<div class='row helptext'><label></label><small>No API key required. Enter your coordinates for Open-Meteo.</small></div>");
   html += F("</div>");
 
@@ -2995,6 +3063,15 @@ void handleSetupPage() {
   html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
   html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
   html += F("</div>");
+  html += F("</div>");
+
+  // I2C config
+  html += F("<div class='card narrow'><h3>I2C (PCF8574)</h3>");
+  html += F("<div class='row'><label>SDA</label><input class='in-xs' type='number' min='0' max='48' name='i2cSda' value='");
+  html += String(i2cSdaPin); html += F("'></div>");
+  html += F("<div class='row'><label>SCL</label><input class='in-xs' type='number' min='0' max='48' name='i2cScl' value='");
+  html += String(i2cSclPin); html += F("'></div>");
+  html += F("<div class='row helptext'><label></label><small>Changing I2C pins requires reboot. Avoid strapping pins and SPI flash/PSRAM pins.</small></div>");
   html += F("</div>");
 
       // Actions
@@ -3577,6 +3654,11 @@ void loadConfig() {
 
   // NEW: Open-Meteo location label (optional trailing line)
   if (f.available()) { if ((s = _safeReadLine(f)).length()) meteoLocation = cleanName(s); }
+  // NEW: Open-Meteo model (optional trailing line)
+  if (f.available()) { if ((s = _safeReadLine(f)).length()) meteoModel = cleanMeteoModel(s); }
+  // NEW: I2C pins (optional trailing lines)
+  if (f.available()) { if ((s = _safeReadLine(f)).length()) { int p=s.toInt(); if (isValidGpioPin(p)) i2cSdaPin = p; } }
+  if (f.available()) { if ((s = _safeReadLine(f)).length()) { int p=s.toInt(); if (isValidGpioPin(p)) i2cSclPin = p; } }
 
   f.close();
 
@@ -3663,6 +3745,11 @@ void saveConfig() {
   f.println(tankLevelPin);
   // NEW: Open-Meteo location label
   f.println(cleanName(meteoLocation));
+  // NEW: Open-Meteo model
+  f.println(cleanMeteoModel(meteoModel));
+  // NEW: I2C pins
+  f.println(i2cSdaPin);
+  f.println(i2cSclPin);
 
   f.close();
 }
@@ -3729,6 +3816,7 @@ void handleConfigure() {
   float  oldLat    = meteoLat;
   float  oldLon    = meteoLon;
   String oldLoc    = meteoLocation;
+  String oldModel  = meteoModel;
   int oldZonePins[MAX_ZONES]; for (int i=0;i<MAX_ZONES;i++) oldZonePins[i] = zonePins[i];
   int oldMainsPin        = mainsPin;
   int oldTankPin         = tankPin;
@@ -3736,11 +3824,23 @@ void handleConfigure() {
   int oldManualSelectPin = manualSelectPin;
   int oldManualStartPin  = manualStartPin;
   int oldRainSensorPin   = rainSensorPin;
+  int oldI2cSda          = i2cSdaPin;
+  int oldI2cScl          = i2cSclPin;
   bool pinsChanged       = false;
 
   // Weather (Open-Meteo)
   if (server.hasArg("meteoLocation")) {
     meteoLocation = cleanName(server.arg("meteoLocation"));
+  }
+  if (server.hasArg("meteoModelSelect")) {
+    String sel = cleanMeteoModel(server.arg("meteoModelSelect"));
+    if (sel == "custom" && server.hasArg("meteoModelCustom")) {
+      meteoModel = cleanMeteoModel(server.arg("meteoModelCustom"));
+    } else {
+      meteoModel = cleanMeteoModel(sel);
+    }
+  } else if (server.hasArg("meteoModel")) {
+    meteoModel = cleanMeteoModel(server.arg("meteoModel"));
   }
   if (server.hasArg("meteoLat")) {
     String s = server.arg("meteoLat"); s.trim();
@@ -3893,6 +3993,14 @@ void handleConfigure() {
     int p = server.arg("manualStartPin").toInt();
     if ((p >= -1 && p <= 39)) manualStartPin = p;
   }
+  if (server.hasArg("i2cSda")) {
+    int p = server.arg("i2cSda").toInt();
+    if (isValidGpioPin(p)) i2cSdaPin = p;
+  }
+  if (server.hasArg("i2cScl")) {
+    int p = server.arg("i2cScl").toInt();
+    if (isValidGpioPin(p)) i2cSclPin = p;
+  }
 
   // Detect pin changes (needs to be done after all pin assignments above)
   for (int i=0;i<MAX_ZONES;i++) if (zonePins[i] != oldZonePins[i]) pinsChanged = true;
@@ -3902,6 +4010,8 @@ void handleConfigure() {
   if (manualSelectPin != oldManualSelectPin) pinsChanged = true;
   if (manualStartPin  != oldManualStartPin)  pinsChanged = true;
   if (rainSensorPin   != oldRainSensorPin)   pinsChanged = true;
+  if (i2cSdaPin        != oldI2cSda)          pinsChanged = true;
+  if (i2cSclPin        != oldI2cScl)          pinsChanged = true;
 
   // NEW: polarity setting
   gpioActiveLow = server.hasArg("gpioActiveLow"); 
@@ -3945,7 +4055,7 @@ void handleConfigure() {
     if (!isfinite(a) || !isfinite(b)) return true;
     return fabsf(a - b) > 0.0001f;
   };
-  if (coordChanged(oldLat, meteoLat) || coordChanged(oldLon, meteoLon) || (oldLoc != meteoLocation)) {
+  if (coordChanged(oldLat, meteoLat) || coordChanged(oldLon, meteoLon) || (oldLoc != meteoLocation) || (oldModel != meteoModel)) {
     // Clear current / forecast caches and timers
     cachedWeatherData   = "";
     cachedForecastData  = "";
