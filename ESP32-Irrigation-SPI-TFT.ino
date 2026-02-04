@@ -37,16 +37,18 @@ extern "C" {
 
 // ---------- Hardware ----------
 static const uint8_t MAX_ZONES = 16;
-constexpr uint8_t I2C_SDA = 8;
-constexpr uint8_t I2C_SCL = 9;
+static const int I2C_SDA_DEFAULT = 8;
+static const int I2C_SCL_DEFAULT = 9;
+static int i2cSdaPin = I2C_SDA_DEFAULT;
+static int i2cSclPin = I2C_SCL_DEFAULT;
 #ifndef STATUS_PIXEL_PIN
 #define STATUS_PIXEL_PIN 48   // ESP32-S3 DevKitC-1 onboard WS2812; set -1 to disable
 #endif
 static const uint8_t STATUS_PIXEL_COUNT = 1;
 
 TwoWire I2Cbus = TwoWire(0);
-PCF8574 pcfIn (&I2Cbus, 0x22, I2C_SDA, I2C_SCL);
-PCF8574 pcfOut(&I2Cbus, 0x24, I2C_SDA, I2C_SCL);
+PCF8574 pcfIn (&I2Cbus, 0x22, I2C_SDA_DEFAULT, I2C_SCL_DEFAULT);
+PCF8574 pcfOut(&I2Cbus, 0x24, I2C_SDA_DEFAULT, I2C_SCL_DEFAULT);
 Adafruit_NeoPixel statusPixel(STATUS_PIXEL_COUNT, STATUS_PIXEL_PIN, NEO_GRB + NEO_KHZ800);
 bool statusPixelReady = false;
 bool tempSensorReady = false;
@@ -899,14 +901,18 @@ static void sanitizePinConfig() {
   // Optional TFT pins
   if (!(tftRstPin == -1 || (isValidGpioPin(tftRstPin) && !isUnsafeTftPin(tftRstPin)))) tftRstPin = TFT_RST_DEFAULT;
   if (!(tftBlPin  == -1 || (isValidGpioPin(tftBlPin)  && !isUnsafeTftPin(tftBlPin))))  tftBlPin  = TFT_BL_DEFAULT;
+
+  // I2C pins
+  if (!isValidGpioPin(i2cSdaPin)) i2cSdaPin = I2C_SDA_DEFAULT;
+  if (!isValidGpioPin(i2cSclPin)) i2cSclPin = I2C_SCL_DEFAULT;
 }
 
 static void validatePinMap() {
   // I2C vs sensors
-  warnPinConflict("I2C_SDA", I2C_SDA, "RainSensor", rainSensorPin);
-  warnPinConflict("I2C_SCL", I2C_SCL, "RainSensor", rainSensorPin);
-  warnPinConflict("I2C_SDA", I2C_SDA, "TankLevel", tankLevelPin);
-  warnPinConflict("I2C_SCL", I2C_SCL, "TankLevel", tankLevelPin);
+  warnPinConflict("I2C_SDA", i2cSdaPin, "RainSensor", rainSensorPin);
+  warnPinConflict("I2C_SCL", i2cSclPin, "RainSensor", rainSensorPin);
+  warnPinConflict("I2C_SDA", i2cSdaPin, "TankLevel", tankLevelPin);
+  warnPinConflict("I2C_SCL", i2cSclPin, "TankLevel", tankLevelPin);
 
   // TFT vs board IO
   warnPinConflict("TFT_CS",  tftCsPin,  "TankLevel", tankLevelPin);
@@ -1108,7 +1114,7 @@ void setup() {
   esp_log_level_set("i2c_master", ESP_LOG_NONE);
 
   // I2C bus
-  I2Cbus.begin(I2C_SDA, I2C_SCL, 100000);
+  I2Cbus.begin(i2cSdaPin, i2cSclPin, 100000);
   I2Cbus.setTimeOut(20);
 
   bootMillis = millis();
@@ -4203,6 +4209,15 @@ void handleSetupPage() {
   html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px;line-height:1.4}");
   html += F(".wrap{max-width:1100px;margin:28px auto;padding:0 16px}");
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
+  html += F(".page-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}");
+  html += F(".page-head h1{margin:0}");
+  html += F(".theme-switch{display:flex;align-items:center;gap:10px;font-weight:700;color:#d6e1f4}");
+  html += F(".switch{position:relative;display:inline-block;width:52px;height:28px}");
+  html += F(".switch input{opacity:0;width:0;height:0}");
+  html += F(".slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#1b2537;border:1px solid #2a3954;transition:.2s;border-radius:999px}");
+  html += F(".slider:before{position:absolute;content:'';height:22px;width:22px;left:3px;top:2px;background:#e8eef6;transition:.2s;border-radius:50%}");
+  html += F("input:checked + .slider{background:#1c74d9;border-color:#1c74d9}");
+  html += F("input:checked + .slider:before{transform:translateX(24px);background:#fff}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
   html += F(".card.narrow{max-width:960px;margin-left:auto;margin-right:auto}");
   html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:850;letter-spacing:.35px;color:#f2f6ff;");
@@ -4263,6 +4278,21 @@ void handleSetupPage() {
   html += F("a{text-decoration:none;color:inherit}");
   html += F("@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}");
 
+  // Light theme overrides
+  html += F("html[data-theme='light'] body{background:#f4f6fb;color:#1b2430}");
+  html += F("html[data-theme='light'] .theme-switch{color:#2a3647}");
+  html += F("html[data-theme='light'] .card{background:#ffffff;border-color:#d7e0ee;box-shadow:0 10px 26px rgba(16,24,40,.08)}");
+  html += F("html[data-theme='light'] .card h3{color:#0f172a;border-bottom-color:#2b7be4}");
+  html += F("html[data-theme='light'] label{color:#1f2a3a}");
+  html += F("html[data-theme='light'] .row small{color:#6b7a90}");
+  html += F("html[data-theme='light'] input[type=text],html[data-theme='light'] input[type=number],html[data-theme='light'] select{background:#f6f8fc;color:#0f172a;border-color:#cfd8ea}");
+  html += F("html[data-theme='light'] .chip{background:#f0f4fb;border-color:#cfd8ea;color:#1f2a3a}");
+  html += F("html[data-theme='light'] .btn-alt{background:#e9eef7;color:#1f2a3a;border-color:#cfd8ea}");
+  html += F("html[data-theme='light'] .btn{background:linear-gradient(180deg,#2b7be4,#1f62c8)}");
+  html += F("html[data-theme='light'] .btn-danger{background:linear-gradient(180deg,#ef4444,#b91c1c)}");
+  html += F("html[data-theme='light'] .hr{background:#d7e0ee}");
+  html += F("html[data-theme='light'] select{background-image:linear-gradient(45deg,transparent 50%,#6b7a90 50%),linear-gradient(135deg,#6b7a90 50%,transparent 50%)}");
+
   // Desktop tuning
   html += F("@media(min-width:1024px){");
   html += F("body{font-size:16px;}");
@@ -4275,7 +4305,9 @@ void handleSetupPage() {
   html += F("}");
   html += F("</style></head><body>");
 
-  html += F("<div class='wrap'><h1>Setup</h1><form action='/configure' method='POST'>");
+  html += F("<div class='wrap'><div class='page-head'><h1>Setup</h1>");
+  html += F("<div class='theme-switch'><span>Light</span><label class='switch'><input type='checkbox' id='themeToggle'><span class='slider'></span></label><span>Dark</span></div>");
+  html += F("</div><form action='/configure' method='POST'>");
 
   // Weather
   html += F("<div class='card narrow'><h3>Weather (Open-Meteo)</h3>");
@@ -4377,6 +4409,13 @@ void handleSetupPage() {
   html += F("'><small>Minutes from UTC</small></div>");
   html += F("</div>"); // end Timezone card
 
+        // Actions
+  html += F("<div class='card narrow'><h3>Actions</h3>");
+  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
+  html += F("</div></div>");
+
   // Tank (available for all modes; water source switching works with any zone count)
   html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
   html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
@@ -4473,6 +4512,15 @@ void handleSetupPage() {
   html += F("</div></div>");
   html += F("<div class='row helptext'><label></label><small id='tftStatusLine'>Backlight: --</small></div>");
   html += F("<div class='row helptext'><label></label><small>Changing TFT pins requires reboot. Use GPIO 1-48 excluding 19/20 (USB), 0/45/46 (strapping), 9-14 & 35-38 (flash/PSRAM).</small></div>");
+  html += F("</div>");
+
+  // I2C config
+  html += F("<div class='card narrow'><h3>I2C (PCF8574)</h3>");
+  html += F("<div class='row'><label>SDA</label><input class='in-xs' type='number' min='0' max='48' name='i2cSda' value='");
+  html += String(i2cSdaPin); html += F("'></div>");
+  html += F("<div class='row'><label>SCL</label><input class='in-xs' type='number' min='0' max='48' name='i2cScl' value='");
+  html += String(i2cSclPin); html += F("'></div>");
+  html += F("<div class='row helptext'><label></label><small>Changing I2C pins requires reboot. Avoid strapping pins and SPI flash/PSRAM pins. 4/15 for KC868 </small></div>");
   html += F("</div>");
 
       // Actions
@@ -4699,6 +4747,16 @@ void handleSetupPage() {
   html += F(" }");
   html += F("}");
 
+  html += F("function initThemeToggle(){");
+  html += F("  let saved=localStorage.getItem('theme');");
+  html += F("  if(saved!=='light'&&saved!=='dark'){saved=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}");
+  html += F("  document.documentElement.setAttribute('data-theme', saved);");
+  html += F("  const cb=document.getElementById('themeToggle');");
+  html += F("  if(cb){cb.checked=(saved==='dark');cb.addEventListener('change',()=>{");
+  html += F("    const next=cb.checked?'dark':'light';document.documentElement.setAttribute('data-theme', next);localStorage.setItem('theme', next);");
+  html += F("  });}");
+  html += F("}");
+  html += F("initThemeToggle();");
   html += F("loadTimezones();");
   html += F("loadTftStatus();");
   // === END TZ CODE ===
@@ -5059,6 +5117,9 @@ void loadConfig() {
   if (f.available()) { if ((s = _safeReadLine(f)).length()) meteoLocation = cleanName(s); }
   // NEW: Open-Meteo model (optional trailing line)
   if (f.available()) { if ((s = _safeReadLine(f)).length()) meteoModel = cleanMeteoModel(s); }
+  // NEW: I2C pins (optional trailing lines)
+  if (f.available()) { if ((s = _safeReadLine(f)).length()) { int p=s.toInt(); if (isValidGpioPin(p)) i2cSdaPin = p; } }
+  if (f.available()) { if ((s = _safeReadLine(f)).length()) { int p=s.toInt(); if (isValidGpioPin(p)) i2cSclPin = p; } }
 
   f.close();
 
@@ -5159,6 +5220,9 @@ void saveConfig() {
   f.println(cleanName(meteoLocation));
   // NEW: Open-Meteo model
   f.println(cleanMeteoModel(meteoModel));
+  // NEW: I2C pins
+  f.println(i2cSdaPin);
+  f.println(i2cSclPin);
 
   f.close();
 }
@@ -5232,6 +5296,8 @@ void handleConfigure() {
   int oldTftDc   = tftDcPin;
   int oldTftRst  = tftRstPin;
   int oldTftBl   = tftBlPin;
+  int oldI2cSda  = i2cSdaPin;
+  int oldI2cScl  = i2cSclPin;
 
   // Weather (Open-Meteo)
   if (server.hasArg("meteoLocation")) {
@@ -5476,6 +5542,17 @@ void handleConfigure() {
                          oldTftRst  != tftRstPin  ||
                          oldTftBl   != tftBlPin);
 
+  if (server.hasArg("i2cSda")) {
+    int p = server.arg("i2cSda").toInt();
+    if (isValidGpioPin(p)) i2cSdaPin = p;
+  }
+  if (server.hasArg("i2cScl")) {
+    int p = server.arg("i2cScl").toInt();
+    if (isValidGpioPin(p)) i2cSclPin = p;
+  }
+
+  bool i2cPinsChanged = (oldI2cSda != i2cSdaPin || oldI2cScl != i2cSclPin);
+
   // Persist and re-apply runtime things
   validatePinMap();
   saveConfig();
@@ -5519,8 +5596,8 @@ void handleConfigure() {
   server.sendHeader("Location", "/setup", true);
   server.send(302, "text/plain", "");
 
-  if (tftPinsChanged) {
-    Serial.println("[CFG] TFT pin mapping changed, restarting to apply...");
+  if (tftPinsChanged || i2cPinsChanged) {
+    Serial.println("[CFG] Pin mapping changed, restarting to apply...");
     delay(200);
     ESP.restart();
   }
