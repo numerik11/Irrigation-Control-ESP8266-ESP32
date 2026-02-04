@@ -2898,6 +2898,15 @@ void handleSetupPage() {
   html += F("body{margin:0;font-family:'Trebuchet MS','Candara','Segoe UI',sans-serif;background:#0e1726;color:#e8eef6;font-size:15px}");
   html += F(".wrap{max-width:1100px;margin:28px auto;padding:0 16px}");
   html += F("h1{margin:0 0 16px 0;font-size:1.7em;letter-spacing:.3px;font-weight:800}");
+  html += F(".page-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}");
+  html += F(".page-head h1{margin:0}");
+  html += F(".theme-switch{display:flex;align-items:center;gap:10px;font-weight:700;color:#d6e1f4}");
+  html += F(".switch{position:relative;display:inline-block;width:52px;height:28px}");
+  html += F(".switch input{opacity:0;width:0;height:0}");
+  html += F(".slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#1b2537;border:1px solid #2a3954;transition:.2s;border-radius:999px}");
+  html += F(".slider:before{position:absolute;content:'';height:22px;width:22px;left:3px;top:2px;background:#e8eef6;transition:.2s;border-radius:50%}");
+  html += F("input:checked + .slider{background:#1c74d9;border-color:#1c74d9}");
+  html += F("input:checked + .slider:before{transform:translateX(24px);background:#fff}");
   html += F(".card{background:#111927;border:1px solid #1f2a44;border-radius:16px;box-shadow:0 8px 34px rgba(0,0,0,.35);padding:18px 16px;margin-bottom:16px}");
   html += F(".card.narrow{max-width:960px;margin-left:auto;margin-right:auto}");
   html += F(".card h3{margin:0 0 12px 0;font-size:1.1em;font-weight:850;letter-spacing:.35px;color:#f2f6ff;");
@@ -2955,6 +2964,21 @@ void handleSetupPage() {
   html += F(".btn:hover,.btn-alt:hover{filter:brightness(1.06)}");
   html += F("input:focus-visible,select:focus-visible{outline:2px solid #1c74d9;outline-offset:2px}");
 
+  // Light theme overrides
+  html += F("html[data-theme='light'] body{background:#f4f6fb;color:#1b2430}");
+  html += F("html[data-theme='light'] .theme-switch{color:#2a3647}");
+  html += F("html[data-theme='light'] .card{background:#ffffff;border-color:#d7e0ee;box-shadow:0 10px 26px rgba(16,24,40,.08)}");
+  html += F("html[data-theme='light'] .card h3{color:#0f172a;border-bottom-color:#2b7be4}");
+  html += F("html[data-theme='light'] label{color:#1f2a3a}");
+  html += F("html[data-theme='light'] .row small{color:#6b7a90}");
+  html += F("html[data-theme='light'] input[type=text],html[data-theme='light'] input[type=number],html[data-theme='light'] select{background:#f6f8fc;color:#0f172a;border-color:#cfd8ea}");
+  html += F("html[data-theme='light'] .chip{background:#f0f4fb;border-color:#cfd8ea;color:#1f2a3a}");
+  html += F("html[data-theme='light'] .btn-alt{background:#e9eef7;color:#1f2a3a;border-color:#cfd8ea}");
+  html += F("html[data-theme='light'] .btn{background:linear-gradient(180deg,#2b7be4,#1f62c8)}");
+  html += F("html[data-theme='light'] .btn-danger{background:linear-gradient(180deg,#ef4444,#b91c1c)}");
+  html += F("html[data-theme='light'] .hr{background:#d7e0ee}");
+  html += F("html[data-theme='light'] select{background-image:linear-gradient(45deg,transparent 50%,#6b7a90 50%),linear-gradient(135deg,#6b7a90 50%,transparent 50%)}");
+
   // Desktop tuning
   html += F("@media(min-width:1024px){");
   html += F("body{font-size:16px;}");
@@ -2967,7 +2991,9 @@ void handleSetupPage() {
   html += F("}");
   html += F("</style></head><body>");
 
-  html += F("<div class='wrap'><h1>Setup</h1><form action='/configure' method='POST'>");
+  html += F("<div class='wrap'><div class='page-head'><h1>Setup</h1>");
+  html += F("<div class='theme-switch'><span>Light</span><label class='switch'><input type='checkbox' id='themeToggle'><span class='slider'></span></label><span>Dark</span></div>");
+  html += F("</div><form action='/configure' method='POST'>");
 
   // Weather
   html += F("<div class='card narrow'><h3>Weather (Open-Meteo)</h3>");
@@ -3320,6 +3346,16 @@ void handleSetupPage() {
   html += F(" }");
   html += F("}");
 
+  html += F("function initThemeToggle(){");
+  html += F("  let saved=localStorage.getItem('theme');");
+  html += F("  if(saved!=='light'&&saved!=='dark'){saved=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}");
+  html += F("  document.documentElement.setAttribute('data-theme', saved);");
+  html += F("  const cb=document.getElementById('themeToggle');");
+  html += F("  if(cb){cb.checked=(saved==='dark');cb.addEventListener('change',()=>{");
+  html += F("    const next=cb.checked?'dark':'light';document.documentElement.setAttribute('data-theme', next);localStorage.setItem('theme', next);");
+  html += F("  });}");
+  html += F("}");
+  html += F("initThemeToggle();");
   html += F("loadTimezones();");
   // === END TZ CODE ===
 
