@@ -268,11 +268,11 @@ Download Kincony PCF8574 library:
 
 -Main Page
 
-<img width="870" height="939" alt="image" src="https://github.com/user-attachments/assets/067be7c3-5128-4438-ae53-19e2e26ac221" />
+<img width="641" height="919" alt="image" src="https://github.com/user-attachments/assets/fa40d71c-d27f-44aa-9ebd-2128cacf388c" />
 
 -Schedules 
 
-<img width="839" height="722" alt="image" src="https://github.com/user-attachments/assets/d144b3e7-fb4d-49d1-aa05-a41db55fa3db" />
+<img width="851" height="417" alt="image" src="https://github.com/user-attachments/assets/d280328d-6e4e-4f2d-9744-8c305444861b" />
 
 -Setup Page
 
