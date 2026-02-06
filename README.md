@@ -272,11 +272,12 @@ Download Kincony PCF8574 library:
 
 -Schedules 
 
-<img width="851" height="417" alt="image" src="https://github.com/user-attachments/assets/d280328d-6e4e-4f2d-9744-8c305444861b" />
+<img width="846" height="687" alt="image" src="https://github.com/user-attachments/assets/6393f64d-017c-4672-887b-5ffccd7a34d4" />
 
 -Setup Page
 
-<img width="926" height="877" alt="image" src="https://github.com/user-attachments/assets/3814479b-1b16-4689-8545-2f1d3d3a28bf" />
+<img width="765" height="775" alt="image" src="https://github.com/user-attachments/assets/c02c13c2-0407-45e4-9973-79321f7280ac" />
+
 
 -KC868-A6 Wiring
 
