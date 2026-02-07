@@ -1,4 +1,4 @@
-//i2c OLED / ESP32 / ESP32 - s3
+//i2c OLED
 
 #ifndef ENABLE_DEBUG_ROUTES
   #define ENABLE_DEBUG_ROUTES 0   // set to 1 when you need them
@@ -564,13 +564,6 @@ inline bool isValidGpioPin(int pin) {
 static void sanitizePinConfig() {
   if (!isValidGpioPin(i2cSdaPin)) i2cSdaPin = I2C_SDA_DEFAULT;
   if (!isValidGpioPin(i2cSclPin)) i2cSclPin = I2C_SCL_DEFAULT;
-  if (!isValidAdcPin(tankLevelPin)) {
-    #if defined(CONFIG_IDF_TARGET_ESP32)
-    tankLevelPin = 34;
-    #elif defined(CONFIG_IDF_TARGET_ESP32S3)
-    tankLevelPin = 1;
-    #endif
-  }
 }
 
 int tankPercent() {
@@ -1526,54 +1519,71 @@ void tickManualButtons() {
 // ---------- Weather / Forecast ----------
 String fetchWeather() {
   if (!isValidLatLon(meteoLat, meteoLon)) return "";
-  HTTPClient http;
-  WiFiClientSecure secure;
-  secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
-  http.setTimeout(2500); // NEW: shorter timeout
-  String model = cleanMeteoModel(meteoModel);
-  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(meteoLat,6) +
-               "&longitude=" + String(meteoLon,6) +
-               "&current=temperature_2m,relative_humidity_2m,apparent_temperature,pressure_msl,surface_pressure,"
-               "wind_speed_10m,wind_gusts_10m,precipitation,weather_code" +
-               "&models=" + model +
-               "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
-               "&timezone=auto";
-  http.begin(secure,url);
-  int code=http.GET();
-  if (code != 200) {
+
+  auto doGet = [&](const String& url) -> String {
+    HTTPClient http;
+    WiFiClientSecure secure;
+    secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
+    http.setTimeout(2500);
+    http.begin(secure, url);
+    int code = http.GET();
+    if (code == 200) {
+      String payload = http.getString();
+      http.end();
+      return payload;
+    }
     http.end();
     return "";
+  };
+
+  String model = cleanMeteoModel(meteoModel);
+  String baseUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + String(meteoLat,6) +
+                   "&longitude=" + String(meteoLon,6) +
+                   "&current=temperature_2m,relative_humidity_2m,apparent_temperature,pressure_msl,surface_pressure,"
+                   "wind_speed_10m,wind_gusts_10m,precipitation,weather_code" +
+                   "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
+                   "&timezone=auto";
+
+  String payload = doGet(baseUrl + "&models=" + model);
+  if (!payload.length()) {
+    // Open-Meteo can reject some model slugs; fallback keeps weather UI alive.
+    payload = doGet(baseUrl);
   }
-  String payload = http.getString();
-  http.end();
   return payload;
 }
 
 String fetchForecast(float lat, float lon) {
   if (!isValidLatLon(lat, lon)) return "";
-  HTTPClient http;
-  WiFiClientSecure secure;
-  secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
-  http.setTimeout(3000); // NEW: shorter timeout
 
-  String model = cleanMeteoModel(meteoModel);
-  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat,6) +
-               "&longitude=" + String(lon,6) +
-               "&hourly=precipitation,precipitation_probability,wind_gusts_10m" +
-               "&daily=temperature_2m_min,temperature_2m_max,sunrise,sunset" +
-               "&forecast_hours=24&forecast_days=2" +
-               "&models=" + model +
-               "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
-               "&timezone=auto";
-
-  http.begin(secure, url);
-  int code = http.GET();
-  if (code != 200) {
+  auto doGet = [&](const String& url) -> String {
+    HTTPClient http;
+    WiFiClientSecure secure;
+    secure.setInsecure(); // minimal HTTPS setup; replace with CA cert for full validation
+    http.setTimeout(3000);
+    http.begin(secure, url);
+    int code = http.GET();
+    if (code == 200) {
+      String payload = http.getString();
+      http.end();
+      return payload;
+    }
     http.end();
     return "";
+  };
+
+  String model = cleanMeteoModel(meteoModel);
+  String baseUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + String(lat,6) +
+                   "&longitude=" + String(lon,6) +
+                   "&hourly=precipitation,precipitation_probability,wind_gusts_10m" +
+                   "&daily=temperature_2m_min,temperature_2m_max,sunrise,sunset" +
+                   "&forecast_hours=24&forecast_days=2" +
+                   "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&pressure_unit=hPa"
+                   "&timezone=auto";
+
+  String payload = doGet(baseUrl + "&models=" + model);
+  if (!payload.length()) {
+    payload = doGet(baseUrl);
   }
-  String payload = http.getString();
-  http.end();
   return payload;
 }
 
@@ -3123,8 +3133,8 @@ void handleSetupPage() {
   html += String(tankLowThresholdPct);
   html += F("'><small>Switch to mains if tank drops below this level</small></div>");
 
-  html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='1' max='20' name='tankLevelPin' value='");
-  html += String(tankLevelPin); html += F("'><small>ADC pin (ESP32-S3: GPIO1-20)</small></div>");
+  html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='-1' max='48' name='tankLevelPin' value='");
+  html += String(tankLevelPin); html += F("'><small>Saved as entered. Use a valid ADC pin for real readings.</small></div>");
   html += F("<div class='row'><label></label><a class='btn-alt' href='/tank'>Calibrate Tank</a></div>");
   html += F("</div>"); // end tankCard
   html += F("</div>");
@@ -3731,8 +3741,7 @@ void loadConfig() {
   // NEW: tank level sensor pin (ADC)
   if (f.available()) {
   if ((s = _safeReadLine(f)).length()) {
-    int p = s.toInt();
-    if (isValidAdcPin(p)) tankLevelPin = p;
+    tankLevelPin = s.toInt();
   }
   }
 
@@ -4066,8 +4075,7 @@ void handleConfigure() {
     if (p >= 0 && p <= 39) tankPin = p;
   }
   if (server.hasArg("tankLevelPin")) {
-    int p = server.arg("tankLevelPin").toInt();
-    if (isValidAdcPin(p)) tankLevelPin = p;
+    tankLevelPin = server.arg("tankLevelPin").toInt();
   }
   if (server.hasArg("manualSelectPin")) {
     int p = server.arg("manualSelectPin").toInt();
