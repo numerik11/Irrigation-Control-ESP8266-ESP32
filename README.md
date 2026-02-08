@@ -108,13 +108,13 @@ Lightweight version using **16×2 LCD**.
 
 ## 🔌 Hardware & I/O
 
-* **KC868-A support**
+* **KC868-A6/8 support**
 
   * PCF8574 @ `0x24` (relays)
   * PCF8574 @ `0x22` (inputs)
-* **Automatic I²C detection**
+* **Automatic I²C Relay detection (for KC868)**
 
-  * Falls back to GPIO mode if expanders not found
+  * Falls back to GPIO mode for ESP32/ESP32-s3 if I²C Relay expanders/KC868 not found
 * **Fully configurable pins**
 
   * Zones, tank, mains, sensors, polarity
