@@ -572,13 +572,6 @@ static void handleSubmit() {
   for (int z = 0; z < (int)zonesCount; z++) {
     String key;
 
-    key = "name" + String(z);
-    if (server.hasArg(key)) {
-      zoneNames[z] = server.arg(key);
-      zoneNames[z].trim();
-      if (!zoneNames[z].length()) zoneNames[z] = "Zone " + String(z + 1);
-    }
-
     key = "sh" + String(z);
     if (server.hasArg(key)) startHour[z] = clampInt(server.arg(key).toInt(), 0, 23);
 
@@ -753,7 +746,8 @@ static void handleRoot() {
   html += F(".btn-link{background:linear-gradient(180deg,var(--pri),var(--pri2));color:#fff;box-shadow:0 8px 18px rgba(0,77,66,.25)}.btn-link:hover,.btn-ghost:hover,button:hover{transform:translateY(-1px)}");
   html += F(".btn-ghost{border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;backdrop-filter:blur(8px)}");
   html += F(".card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:15px;box-shadow:0 10px 30px rgba(12,35,52,.1);backdrop-filter:blur(10px);animation:rise .42s ease-out}");
-  html += F(".pills{display:flex;flex-wrap:wrap;gap:8px}.pill{background:rgba(255,255,255,.65);border:1px solid var(--line);border-radius:999px;padding:7px 11px;font-size:.84rem;font-weight:650}html[data-theme='dark'] .pill{background:rgba(11,25,36,.66)}");
+  html += F(".pills{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px}.pill{background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(238,247,243,.82));border:1px solid var(--line);border-radius:13px;padding:8px 10px;min-height:56px;display:flex;flex-direction:column;justify-content:center;box-shadow:0 4px 12px rgba(12,34,46,.08)}");
+  html += F(".pill .k{font-size:.68rem;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:800;line-height:1.1}.pill .v{font-size:1rem;font-weight:850;line-height:1.3}html[data-theme='dark'] .pill{background:linear-gradient(180deg,rgba(20,37,50,.9),rgba(13,28,40,.9))}");
   html += F("h2{margin:0 0 12px 0;font-size:1.1rem;letter-spacing:.15px}.zones{display:grid;grid-template-columns:1fr;gap:12px}@media(min-width:960px){.zones{grid-template-columns:1fr 1fr}}");
   html += F(".zone{border:1px solid var(--line);border-radius:14px;padding:13px;background:rgba(255,255,255,.66);box-shadow:inset 0 1px 0 rgba(255,255,255,.45);animation:rise .5s ease-out}html[data-theme='dark'] .zone{background:rgba(15,31,44,.7)}");
   html += F(".zones .zone:nth-child(2n){animation-delay:.04s}.zhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}.ztitle{font-weight:850}.tag{font-size:.77rem;color:var(--muted)}");
@@ -774,32 +768,31 @@ static void handleRoot() {
   html += F("<div class='head-actions'><button class='btn-ghost' type='button' id='themeToggle'>Theme</button><a class='btn-link' href='/setup'>Setup</a></div></div>");
 
   html += F("<div class='card'><div class='pills'>");
-  html += F("<div class='pill'><b>Time</b> <span id='clockVal'>");
+  html += F("<div class='pill'><span class='k'>Time</span><span class='v' id='clockVal'>");
   html += fmtHHMM(t.tm_hour, t.tm_min);
-  html += F("</span>");
-  html += F("</div>");
-  html += F("<div class='pill'><b>WiFi</b> ");
+  html += F("</span></div>");
+  html += F("<div class='pill'><span class='k'>WiFi</span><span class='v'>");
   html += (WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
-  html += F("</div>");
-  html += F("<div class='pill'><b>IP</b> ");
+  html += F("</span></div>");
+  html += F("<div class='pill'><span class='k'>IP</span><span class='v'>");
   html += WiFi.localIP().toString();
-  html += F("</div>");
-  html += F("<div class='pill'><b>Host</b> 8266Irrigation.local</div>");
-  html += F("<div class='pill'><b>Weather</b> <span id='wxState'>");
+  html += F("</span></div>");
+  html += F("<div class='pill'><span class='k'>Host</span><span class='v'>8266Irrigation.local</span></div>");
+  html += F("<div class='pill'><span class='k'>Weather</span><span class='v' id='wxState'>");
   if (!weatherEnabled) html += F("Off");
   else if (!weatherValid) html += F("Updating...");
   else html += F("Live");
   html += F("</span></div>");
-  html += F("<div class='pill'><b>Temp</b> <span id='wxTemp'>");
+  html += F("<div class='pill'><span class='k'>Temp</span><span class='v' id='wxTemp'>");
   html += String(weatherTempC, 1);
   html += F("C</span></div>");
-  html += F("<div class='pill'><b>Wind</b> <span id='wxWind'>");
+  html += F("<div class='pill'><span class='k'>Wind</span><span class='v' id='wxWind'>");
   html += String(weatherWindKmh, 1);
   html += F(" km/h</span></div>");
-  html += F("<div class='pill'><b>Rain</b> <span id='wxRain'>");
+  html += F("<div class='pill'><span class='k'>Rain</span><span class='v' id='wxRain'>");
   html += String(weatherPrecipMm, 2);
   html += F(" mm</span></div>");
-  html += F("<div class='pill'><b>Weather Lock</b> <span id='wxLock'>");
+  html += F("<div class='pill'><span class='k'>Weather Lock</span><span class='v' id='wxLock'>");
   if (rainActive) html += F("Rain");
   else if (windDelayActive) html += F("Wind delay");
   else html += F("None");
@@ -813,9 +806,6 @@ static void handleRoot() {
     html += F("</div><div class='tag'>Pin ");
     html += String(zonePins[z]);
     html += F("</div></div>");
-
-    html += F("<div class='row'><label>Name</label><input type='text' name='name"); html += String(z); html += F("' value='");
-    html += zoneNames[z]; html += F("'></div>");
 
     html += F("<div class='row'><label>Start 1</label><input type='number' min='0' max='23' name='sh"); html += String(z); html += F("' value='"); html += String(startHour[z]); html += F("'>");
     html += F("<input type='number' min='0' max='59' name='sm"); html += String(z); html += F("' value='"); html += String(startMin[z]); html += F("'>");
