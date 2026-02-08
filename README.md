@@ -10,13 +10,30 @@ Built for **reliability, flexibility, and real-world garden setups** — from sm
 
 ## ✨ Features
 
-* **1–16 irrigation zones**
-* **Automatic Tank ↔ Mains water source selection**
-* **Rain & wind-aware scheduling**
+* **1–16 irrigation zones (Optional)**
+* **Automatic Tank ↔ Mains water source selection (Optional)**
+* **Rain & wind-aware scheduling (Optional)**
 * **Modern web UI**
 * **Weather Display**
 * **Optional TFT / OLED / LCD displays**
 * **ESP32/ESP32-S3 recommended (KC868-A6/A8 also supported)**
+
+---
+
+## ⏱ Zones & Scheduling
+
+* **1–16 zones**
+* **Two start times per zone**
+
+  * Optional second start with separate duration
+* **7-day scheduling**
+* **Minute + second precision**
+
+  * Sequential (default)
+  * All at Once (power supply permitting)
+* **Editable zone names**
+
+  * Stored directly on ESP32
 
 ---
 
@@ -86,25 +103,6 @@ Lightweight option using common **16×2 or 20×4 LCDs**.
 
   * Progress bars
   * Manual On / Off control
-
----
-
-## ⏱ Zones & Scheduling
-
-* **1–16 zones**
-* **Two start times per zone**
-
-  * Optional second start with separate duration
-* **7-day scheduling**
-* **Minute + second precision**
-* **Per-zone duration**
-* **Overlapping modes**
-
-  * Sequential (default)
-  * Concurrent (power supply permitting)
-* **Editable zone names**
-
-  * Stored directly on ESP32
 
 ---
 
