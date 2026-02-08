@@ -8,12 +8,13 @@ Built for **reliability, flexibility, and real-world garden setups** — from sm
 
 ---
 
-## ✨ Highlights
+## ✨ Features
 
 * **1–16 irrigation zones**
 * **Automatic Tank ↔ Mains water source selection**
 * **Rain & wind-aware scheduling**
 * **Modern web UI**
+* **Weather Display**
 * **Optional TFT / OLED / LCD displays**
 * **ESP32/ESP32-S3 recommended (KC868-A6/A8 also supported)**
 
