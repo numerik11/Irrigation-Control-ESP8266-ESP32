@@ -171,7 +171,8 @@ Manual zone activation **respects the same safety rules**.
 ## 📦 Requirements
 
 * Reliable **Wi-Fi connection**
-* **ESP32 board** (ESP32-S3 or KC868-A recommended)
+* **ESP32 board** (ESP32/ESP32-S3 or KC868-A6/8 recommended)
+* **TFT 240x320 w/ BL pin (for screen sleep) or OLED Screen 
 * **1–16 relay module** (if not using KC868)
 * **Tank level sensor**
 
