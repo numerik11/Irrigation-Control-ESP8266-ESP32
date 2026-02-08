@@ -15,8 +15,7 @@ Built for **reliability, flexibility, and real-world garden setups** — from sm
 * **Rain & wind-aware scheduling**
 * **Modern web UI**
 * **Optional TFT / OLED / LCD displays**
-* **KC868-A6 board support with GPIO fallback**
-* **ESP32-S3 recommended (KC868-A6 also supported)**
+* **ESP32/ESP32-S3 recommended (KC868-A6/A8 also supported)**
 
 ---
 
