@@ -471,7 +471,7 @@ void mqttPublishStatus(){
   if (millis() - _lastMqttPub < 3000) return;
   _lastMqttPub = millis();
 
-  DynamicJsonDocument d(1024 + MAX_ZONES*64);
+  JsonDocument d;
   d["masterOn"] = systemMasterEnabled;
   d["paused"]   = (systemPaused && (pauseUntilEpoch==0 || time(nullptr)<(time_t)pauseUntilEpoch));
   d["cooldownRemaining"] = (rainCooldownUntilEpoch>time(nullptr)? (rainCooldownUntilEpoch - time(nullptr)) : 0);
@@ -484,9 +484,9 @@ void mqttPublishStatus(){
   float chipTemp = NAN;
   if (readChipTempC(chipTemp)) d["chipTempC"] = chipTemp;
   else                         d["chipTempC"] = nullptr;
-  JsonArray arr = d.createNestedArray("zones");
+  JsonArray arr = d["zones"].to<JsonArray>();
   for (int i=0;i<zonesCount;i++){
-    JsonObject z = arr.createNestedObject();
+    JsonObject z = arr.add<JsonObject>();
     z["name"] = zoneNames[i];
     z["active"] = zoneActive[i];
   }
@@ -581,13 +581,13 @@ static bool isKnownMeteoModel(const String& s) {
 
 static bool isMeteoErrorPayload(const String& payload) {
   if (payload.indexOf("\"error\"") == -1) return false;
-  DynamicJsonDocument js(512);
+  JsonDocument js;
   if (deserializeJson(js, payload) != DeserializationError::Ok) return false;
   return (js["error"] | false) == true;
 }
 
 static String meteoErrorReason(const String& payload) {
-  DynamicJsonDocument js(512);
+  JsonDocument js;
   if (deserializeJson(js, payload) != DeserializationError::Ok) return "";
   if ((js["error"] | false) != true) return "";
   return js["reason"] | "";
@@ -990,6 +990,12 @@ void statusPixelSet(uint8_t r,uint8_t g,uint8_t b) {
   #include "soc/soc_caps.h"
 #endif
 
+// SDK compatibility: some IDF/Arduino builds expose SOC_TEMP_SENSOR_SUPPORTED
+// instead of SOC_TEMPERATURE_SENSOR_SUPPORTED.
+#if !defined(SOC_TEMPERATURE_SENSOR_SUPPORTED) && defined(SOC_TEMP_SENSOR_SUPPORTED)
+  #define SOC_TEMPERATURE_SENSOR_SUPPORTED SOC_TEMP_SENSOR_SUPPORTED
+#endif
+
 #if defined(SOC_TEMPERATURE_SENSOR_SUPPORTED) && SOC_TEMPERATURE_SENSOR_SUPPORTED && __has_include("driver/temperature_sensor.h")
   #include "driver/temperature_sensor.h"
 
@@ -1070,6 +1076,7 @@ static uint8_t g_tftBrightness = 125; // 0-255 duty when ON
 static const int TFT_PWM_CH = 7;      // LEDC channel for TFT BL
 static bool g_forceHomeReset = false; // force full HomeScreen repaint
 static bool g_forceRainReset = false; // force full RainScreen repaint
+static bool g_forceManualReset = false; // force full Manual screen repaint
 
 // ---------- LEDC PWM compatibility (ESP32 Arduino core 2.x vs 3.x) ----------
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
@@ -1419,7 +1426,7 @@ void setup() {
   // /status JSON
   server.on("/status", HTTP_GET, [](){
     HttpScope _scope; // NEW: avoid heavy work while serving
-    DynamicJsonDocument doc(4096 + MAX_ZONES * 160);
+    JsonDocument doc;
 
   doc["rainDelayActive"] = rainActive;
   doc["windDelayActive"] = windActive;
@@ -1491,9 +1498,9 @@ void setup() {
     doc["runConcurrent"] = runZonesConcurrent;
 
     // Zones snapshot
-    JsonArray zones = doc.createNestedArray("zones");
+    JsonArray zones = doc["zones"].to<JsonArray>();
     for (int i=0; i<zonesCount; i++){
-      JsonObject z = zones.createNestedObject();
+      JsonObject z = zones.add<JsonObject>();
       z["active"] = zoneActive[i];
       z["name"]   = zoneNames[i];
       unsigned long rem = 0;
@@ -1511,7 +1518,7 @@ void setup() {
 
     // Current weather pass-through (no fetch, just decode cache)
     {
-      DynamicJsonDocument js(2048);
+      JsonDocument js;
       if (deserializeJson(js, cachedWeatherData) == DeserializationError::Ok) {
         JsonObject cur = js["current"].as<JsonObject>();
         doc["temp"]       = cur["temperature_2m"]        | 0.0f;
@@ -1579,7 +1586,7 @@ void setup() {
     time_t nowEpoch = time(nullptr);
     struct tm lt; localtime_r(&nowEpoch, &lt);
     struct tm gt; gmtime_r(&nowEpoch,  &gt);
-    DynamicJsonDocument d(512);
+    JsonDocument d;
     d["epoch"] = (uint32_t)nowEpoch;
     char buf[32];
     strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S",&lt); d["local"] = buf;
@@ -2015,6 +2022,7 @@ void initGpioPinsForZones() {
 // ---------- Manual hardware buttons (select + start/stop) ----------
 void showManualSelection() {
   manualScreenUntilMs = millis() + 15000UL;
+  g_forceManualReset = true;
   drawManualSelection();
 }
 
@@ -2033,26 +2041,48 @@ void drawManualSelection() {
 
   const int W = tft.width();
   const int H = tft.height();
+  static bool init = false;
+  static int lastW = -1;
+  static int lastH = -1;
+  static int lastZone = -1;
 
-  tft.fillScreen(C_BG);
-  drawTopBar("Manual", "BTN", C_ACCENT);
+  const bool layoutChanged = g_forceManualReset || !init || lastW != W || lastH != H;
+  if (layoutChanged) {
+    tft.fillScreen(C_BG);
+    drawTopBar("Manual", "BTN", C_ACCENT);
 
-  int cardW = W - 24;
-  int cardH = 90;
-  int cardX = 12;
-  int cardY = (H - cardH) / 2;
-  drawCard(cardX, cardY, cardW, cardH, C_PANEL, C_EDGE);
+    int cardW = W - 24;
+    int cardH = 90;
+    int cardX = 12;
+    int cardY = (H - cardH) / 2;
+    drawCard(cardX, cardY, cardW, cardH, C_PANEL, C_EDGE);
 
-  tft.setTextColor(C_TEXT);
-  tft.setTextSize(3);
-  tft.setCursor(cardX + 12, cardY + 16);
-  tft.print("Zone ");
-  tft.print((int)manualSelectedZone + 1);
+    tft.setTextSize(1);
+    tft.setTextColor(C_MUTED);
+    tft.setCursor(cardX + 12, cardY + cardH - 18);
+    tft.print("Press Start to toggle");
 
-  tft.setTextSize(1);
-  tft.setTextColor(C_MUTED);
-  tft.setCursor(cardX + 12, cardY + cardH - 18);
-  tft.print("Press Start to toggle");
+    init = true;
+    lastW = W;
+    lastH = H;
+    lastZone = -1;
+    g_forceManualReset = false;
+  }
+
+  if (layoutChanged || lastZone != (int)manualSelectedZone) {
+    int cardW = W - 24;
+    int cardH = 90;
+    int cardX = 12;
+    int cardY = (H - cardH) / 2;
+
+    tft.fillRect(cardX + 10, cardY + 12, cardW - 20, 38, C_PANEL);
+    tft.setTextColor(C_TEXT);
+    tft.setTextSize(3);
+    tft.setCursor(cardX + 12, cardY + 16);
+    tft.print("Zone ");
+    tft.print((int)manualSelectedZone + 1);
+    lastZone = manualSelectedZone;
+  }
 }
 
 void initManualButtons() {
@@ -2178,7 +2208,7 @@ String fetchWeatherHourlyForCurrent(const String& model, float lat, float lon, b
 
 bool buildCurrentFromHourlyPayload(const String& hourlyPayload, String& outPayload) {
   if (isMeteoErrorPayload(hourlyPayload)) return false;
-  DynamicJsonDocument js(12 * 1024);
+  JsonDocument js;
   if (deserializeJson(js, hourlyPayload) != DeserializationError::Ok) {
     return false;
   }
@@ -2204,9 +2234,9 @@ bool buildCurrentFromHourlyPayload(const String& hourlyPayload, String& outPaylo
     return arr[bestIdx].as<float>();
   };
 
-  DynamicJsonDocument out(1024);
+  JsonDocument out;
   out["utc_offset_seconds"] = js["utc_offset_seconds"] | 0;
-  JsonObject cur = out.createNestedObject("current");
+  JsonObject cur = out["current"].to<JsonObject>();
   cur["time"] = timeArr[bestIdx] | 0;
   cur["temperature_2m"]       = pick("temperature_2m");
   cur["relative_humidity_2m"] = pick("relative_humidity_2m");
@@ -2320,7 +2350,7 @@ void updateCachedWeather() {
 
   // Extract 1h rain from current conditions
   {
-    DynamicJsonDocument js(2048);
+    JsonDocument js;
     if (deserializeJson(js, cachedWeatherData) == DeserializationError::Ok) {
       JsonObject cur = js["current"].as<JsonObject>();
       float r1 = cur["precipitation"] | 0.0f;
@@ -2348,7 +2378,7 @@ void updateCachedWeather() {
       todaySunrise   = 0;   
       todaySunset    = 0;
 
-      DynamicJsonDocument fc(12 * 1024);
+      JsonDocument fc;
       if (deserializeJson(fc, cachedForecastData) == DeserializationError::Ok) {
         JsonObject daily = fc["daily"].as<JsonObject>();
         JsonArray sunr = daily["sunrise"].as<JsonArray>();
@@ -2393,7 +2423,7 @@ void updateCachedWeather() {
   }
 
   // Fallback min/max from current weather
-  DynamicJsonDocument cur(2048);
+  JsonDocument cur;
   if (deserializeJson(cur, cachedWeatherData) == DeserializationError::Ok) {
     float tcur = cur["current"]["temperature_2m"] | NAN;
     if (isfinite(tcur)) {
@@ -2440,7 +2470,7 @@ bool checkWindRain() {
   bool newWindActual        = false;   // raw wind above threshold
 
   // --- 1) Parse cached weather JSON (Open-Meteo) ---
-  DynamicJsonDocument js(2048);
+  JsonDocument js;
   DeserializationError err = deserializeJson(js, cachedWeatherData);
 
   if (!err) {
@@ -2555,7 +2585,7 @@ bool checkWindRain() {
 // ---------- Event log ----------
 void logEvent(int zone, const char* eventType, const char* source, bool rainDelayed) {
   updateCachedWeather(); // safe early-out if g_inHttp==true, keeps details recent enough
-  DynamicJsonDocument js(512);
+  JsonDocument js;
   float temp=NAN, wind=NAN; int hum=0; String cond="?", cname=meteoLocationLabel();
   if (deserializeJson(js,cachedWeatherData)==DeserializationError::Ok) {
     JsonObject cur = js["current"].as<JsonObject>();
@@ -2851,7 +2881,7 @@ void RainScreen(){
 
   float windNow = NAN;
   {
-    DynamicJsonDocument js(384);
+    JsonDocument js;
     DeserializationError derr = deserializeJson(js, cachedWeatherData);
     if (!derr) windNow = js["wind"]["speed"] | NAN;
   }
@@ -3026,7 +3056,7 @@ void RainScreen(){
 
 void HomeScreen() {
   if (!displayUseTft) {
-    DynamicJsonDocument jsOled(1024);
+    JsonDocument jsOled;
     (void)deserializeJson(jsOled, cachedWeatherData);
     JsonObject curOled = jsOled["current"].as<JsonObject>();
     float tempOled = curOled["temperature_2m"] | NAN;
@@ -3075,7 +3105,7 @@ void HomeScreen() {
     return;
   }
 
-  DynamicJsonDocument js(2048);
+  JsonDocument js;
   (void)deserializeJson(js, cachedWeatherData);
 
   JsonObject cur = js["current"].as<JsonObject>();
@@ -3670,15 +3700,7 @@ void turnOnZone(int z) {
 
   logEvent(z, "START", src, false);
 
-  if (displayUseTft) {
-    tft.fillScreen(ST77XX_BLACK);
-    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(2, 0);
-    tft.print(zoneNames[z]);
-    tft.print(" ON");
-    delay(1000);
-  } else {
+  if (!displayUseTft) {
     display.clearDisplay();
     display.setTextSize(2);
     display.setCursor(2, 0);
@@ -3688,7 +3710,7 @@ void turnOnZone(int z) {
     delay(350);
   }
 
-  // Force a clean redraw of Home after the ON banner
+  // Force a clean redraw immediately for TFT (no ON splash delay).
   if (displayUseTft) {
     g_forceHomeReset = true;
     tft.fillScreen(C_BG);
@@ -3732,16 +3754,7 @@ void turnOffZone(int z) {
     setWaterSourceRelays(false, false);
   }
 
-  if (displayUseTft) {
-    tft.fillScreen(ST77XX_BLACK);
-    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(2, 0);
-    tft.print(zoneNames[z]);
-    tft.print(" OFF");
-    delay(1000);
-    g_forceHomeReset = true;
-  } else {
+  if (!displayUseTft) {
     display.clearDisplay();
     display.setTextSize(2);
     display.setCursor(4, 0);
@@ -3750,6 +3763,7 @@ void turnOffZone(int z) {
     display.display();
     delay(350);
   }
+  if (displayUseTft) g_forceHomeReset = true;
 
   // Ensure the display returns to Home after showing the OFF banner
   HomeScreen();
@@ -3805,6 +3819,15 @@ void turnOnValveManual(int z) {
   }
 
   // Manual starts are not logged
+  manualScreenUntilMs = 0;  // leave zone-select overlay immediately
+  g_forceManualReset = true;
+  lastScreenRefresh = 0;
+  if (displayUseTft) {
+    tft.fillScreen(C_BG);
+    updateLCDForZone(z);
+  } else {
+    HomeScreen();
+  }
 }
 
 void turnOffValveManual(int z) {
@@ -3924,7 +3947,7 @@ void handleRoot() {
 
   // Keep this - it respects the g_inHttp guard
   updateCachedWeather();
-  DynamicJsonDocument js(2048);
+  JsonDocument js;
   DeserializationError werr = deserializeJson(js, cachedWeatherData);
 
   // Safe reads
