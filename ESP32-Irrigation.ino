@@ -4045,7 +4045,7 @@ void handleRoot() {
   html += F(".fill{position:absolute;inset:0 0 0 0;width:0%;height:100%;background:linear-gradient(90deg,#30d1ff,#4da3ff,#1c74d9);");
   html += F("box-shadow:0 0 30px rgba(77,163,255,.35) inset;transition:width .4s ease}");
   html += F(".badge{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:999px;border:1px solid var(--glass-brd);font-size:.9rem}");
-  html += F(".b-ok{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35)}");
+  html += F(".b-ok{background:rgba(34,197,94,.12);border-color:rgba(13, 46, 230, 0.42)}");
   html += F(".b-warn{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35)}");
   html += F(".b-bad{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.38)}");
   html += F(".toolbar{display:flex;gap:var(--gap);flex-wrap:wrap;margin:14px 0 0}");
@@ -4773,6 +4773,122 @@ void handleSetupPage() {
   html += F("<div class='theme-switch'><span>Light</span><label class='switch'><input type='checkbox' id='themeToggle'><span class='slider'></span></label><span>Dark</span></div>");
   html += F("</div><form action='/configure' method='POST'>");
 
+  // Zones
+  html += F("<div class='card narrow'><h3>Zones</h3>");
+  html += F("<div class='row'><label>Zone Count</label><input class='in-xs' type='number' min='1' max='");
+  html += String(MAX_ZONES);
+  html += F("' name='zonesMode' value='");
+  html += String(zonesCount);
+  html += F("'><small>Tank/Mains works with any zone count. Up to ");
+  html += String(MAX_ZONES);
+  html += F(" zones supported.</small></div>");
+
+  // Run mode
+  html += F("<div class='row switchline'><label>Run Mode</label>");
+  html += F("<label><input type='checkbox' name='runConcurrent' "); html += (runZonesConcurrent ? "checked" : "");
+  html += F("> Run Zones Together</label><small>Unchecked = One at a time. If enabled, ensure your power supply can handle multiple valves running at once.</small></div>");
+  html += F("</div>");
+
+  // Tank (available for all modes; water source switching works with any zone count)
+  html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
+  html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
+  html += (tankEnabled ? "checked" : "");
+  html += F("><small>Unchecked = ignore tank level and force mains</small></div>");
+  html += F("<div id='tankCard'>");
+
+  html += F("<div class='row switchline'><label>Water Source</label>");
+
+  // Auto
+  html += F("<label><input type='radio' name='waterMode' value='auto' ");
+  if (!justUseTank && !justUseMains) html += F("checked");
+  html += F("> Auto (Tank + Mains)</label>");
+
+  // Only Tank
+  html += F("<label><input type='radio' name='waterMode' value='tank' ");
+  if (justUseTank) html += F("checked");
+  html += F("> Only Tank</label>");
+
+  // Only Mains
+  html += F("<label><input type='radio' name='waterMode' value='mains' ");
+  if (justUseMains) html += F("checked");
+  html += F("> Only Mains</label>");
+
+  html += F("<small>");
+  html += "Tank/mains switching works with any zone count";
+  html += F("</small></div>");
+
+  html += F("<div class='row'><label>Tank Low Threshold (%)</label>"
+            "<input class='in-xs' type='number' min='0' max='100' name='tankThresh' value='");
+  html += String(tankLowThresholdPct);
+  html += F("'><small>Switch to mains if tank drops below this level</small></div>");
+
+  html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='1' max='20' name='tankLevelPin' value='");
+  html += String(tankLevelPin); html += F("'><small>ADC pin (ESP32-S3: GPIO1-20)</small></div>");
+  html += F("<div class='row'><label></label><a class='btn-alt' href='/tank'>Calibrate Tank</a></div>");
+  html += F("</div>"); // end tankCard
+  html += F("</div>");
+
+  // Delays & Pause + thresholds
+  html += F("<div class='card narrow'><h3>Delays & Pause</h3>");
+  html += F("<div class='cols2'>");
+
+  // Left column: toggles
+  html += F("<div>");
+  html += F("<div class='subhead'>Delay Toggles</div><hr class='hr'>");
+  html += F("<div class='row switchline'><label>Rain Delay</label><input type='checkbox' name='rainDelay' ");
+  html += (rainDelayEnabled ? "checked" : ""); html += F("></div>");
+  html += F("<div class='row switchline'><label>Wind Delay</label><input type='checkbox' name='windCancelEnabled' ");
+  html += (windDelayEnabled ? "checked" : ""); html += F("></div>");
+  html += F("<div class='row switchline'><label>System Pause</label><input type='checkbox' name='pauseEnable' ");
+  html += (systemPaused ? "checked" : ""); html += F("><small>Enable System Pause</small></div>");
+  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
+  html += F("<button class='btn' type='button' id='btn-pause-24'>Pause 24h</button>");
+  html += F("<button class='btn' type='button' id='btn-pause-7d'>Pause 7d</button>");
+  html += F("<button class='btn' type='button' id='btn-resume'>Unpause</button>");
+  html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
+  time_t nowEp = time(nullptr);
+    {
+    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
+    html += String(remain/3600);
+  }
+  html += F("'></div>");
+  html += F("</div>");
+  // LCD Brightness moved to SPI (TFT) card
+  html += F("</div>");
+
+    // Physical rain & forecast
+  html += F("<div class='card narrow'><h3>Rain Sources</h3>");
+  html += F("<div class='row switchline'><label>Disable Open-Meteo Rain</label><input type='checkbox' name='rainForecastDisabled' ");
+  html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore Open-Meteo rain</small></div>");
+  html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
+  html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
+  html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
+  html += F("</div>");
+  html += F("</div>");
+
+  // Right column: numeric thresholds / timers
+  html += F("<div>");
+  html += F("<div class='subhead'>Thresholds & Timers</div><hr class='hr'>");
+  html += F("<div class='row'><label>Wind Threshold (m/s)</label><input class='in-sm' type='number' step='0.1' min='0' max='50' name='windSpeedThreshold' value='");
+  html += String(windSpeedThreshold,1); html += F("'></div>");
+  html += F("<div class='row'><label>Rain Cooldown (hours)</label><input class='in-sm' type='number' min='0' max='720' name='rainCooldownHours' value='");
+  html += String(rainCooldownMin / 60);
+  html += F("'><small>Cooldown period after rain stops</small></div>");
+  html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
+  html += String(rainThreshold24h_mm);
+  html += F("'><small>Delay if >= threshold (24h total)</small></div>");
+  html += F("</div>");
+
+  html += F("</div>"); // end cols2
+  html += F("</div>"); // end Delays card
+
+  // Actions
+  html += F("<div class='card narrow'><h3>Actions</h3>");
+  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
+  html += F("<button class='btn' type='submit'>Save</button>");
+  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
+  html += F("</div></div>");
+
   // Weather
   html += F("<div class='card narrow'><h3>Weather (Open-Meteo)</h3>");
   String modelSel = cleanMeteoModel(meteoModel);
@@ -4802,22 +4918,6 @@ void handleSetupPage() {
   html += (modelIsKnown ? "" : modelSel);
   html += F("'><small>Use an Open-Meteo model slug (e.g., gfs, icon, ecmwf)</small></div>");
   html += F("<div class='row helptext'><label></label><small>No API key required. Enter your coordinates for Open-Meteo.</small></div>");
-  html += F("</div>");
-
-  // Zones
-  html += F("<div class='card narrow'><h3>Zones</h3>");
-  html += F("<div class='row'><label>Zone Count</label><input class='in-xs' type='number' min='1' max='");
-  html += String(MAX_ZONES);
-  html += F("' name='zonesMode' value='");
-  html += String(zonesCount);
-  html += F("'><small>Tank/Mains works with any zone count. Up to ");
-  html += String(MAX_ZONES);
-  html += F(" zones supported.</small></div>");
-
-  // Run mode
-  html += F("<div class='row switchline'><label>Run Mode</label>");
-  html += F("<label><input type='checkbox' name='runConcurrent' "); html += (runZonesConcurrent ? "checked" : "");
-  html += F("> Run Zones Together</label><small>Unchecked = One at a time. If enabled, ensure your power supply can handle multiple valves running at once.</small></div>");
   html += F("</div>");
 
   // Timezone
@@ -4872,52 +4972,6 @@ void handleSetupPage() {
   html += String(tzFixedOffsetMin);
   html += F("'><small>Minutes from UTC</small></div>");
   html += F("</div>"); // end Timezone card
-
-        // Actions
-  html += F("<div class='card narrow'><h3>Actions</h3>");
-  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
-  html += F("<button class='btn' type='submit'>Save</button>");
-  html += F("<button class='btn-alt' formaction='/' formmethod='GET'>Home</button>");
-  html += F("</div></div>");
-
-  // Tank (available for all modes; water source switching works with any zone count)
-  html += F("<div class='card narrow'><h3>Tank & Water Source</h3>");
-  html += F("<div class='row switchline'><label>Enable Tank</label><input type='checkbox' name='tankEnabled' ");
-  html += (tankEnabled ? "checked" : "");
-  html += F("><small>Unchecked = ignore tank level and force mains</small></div>");
-  html += F("<div id='tankCard'>");
-
-  html += F("<div class='row switchline'><label>Water Source</label>");
-
-  // Auto
-  html += F("<label><input type='radio' name='waterMode' value='auto' ");
-  if (!justUseTank && !justUseMains) html += F("checked");
-  html += F("> Auto (Tank + Mains)</label>");
-
-  // Only Tank
-  html += F("<label><input type='radio' name='waterMode' value='tank' ");
-  if (justUseTank) html += F("checked");
-  html += F("> Only Tank</label>");
-
-  // Only Mains
-  html += F("<label><input type='radio' name='waterMode' value='mains' ");
-  if (justUseMains) html += F("checked");
-  html += F("> Only Mains</label>");
-
-  html += F("<small>");
-  html += "Tank/mains switching works with any zone count";
-  html += F("</small></div>");
-
-  html += F("<div class='row'><label>Tank Low Threshold (%)</label>"
-            "<input class='in-xs' type='number' min='0' max='100' name='tankThresh' value='");
-  html += String(tankLowThresholdPct);
-  html += F("'><small>Switch to mains if tank drops below this level</small></div>");
-
-  html += F("<div class='row'><label>Tank Sensor GPIO</label><input class='in-xs' type='number' min='1' max='20' name='tankLevelPin' value='");
-  html += String(tankLevelPin); html += F("'><small>ADC pin (ESP32-S3: GPIO1-20)</small></div>");
-  html += F("<div class='row'><label></label><a class='btn-alt' href='/tank'>Calibrate Tank</a></div>");
-  html += F("</div>"); // end tankCard
-  html += F("</div>");
 
   // Display / Auto backlight
   html += F("<div class='card narrow'><h3>Display</h3>");
@@ -5008,60 +5062,6 @@ void handleSetupPage() {
   html += F("<button class='btn-alt' type='button' onclick=\"fetch('/clear_cooldown',{method:'POST'})\">Clear Cooldown</button>");
   html += F("<button class='btn btn-danger' type='button' onclick=\"if(confirm('Reboot controller now?'))fetch('/reboot',{method:'POST'})\">Reboot</button>");
   html += F("</div></div>");
-
-  // Delays & Pause + thresholds
-  html += F("<div class='card narrow'><h3>Delays & Pause</h3>");
-  html += F("<div class='cols2'>");
-
-  // Left column: toggles
-  html += F("<div>");
-  html += F("<div class='subhead'>Delay Toggles</div><hr class='hr'>");
-  html += F("<div class='row switchline'><label>Rain Delay</label><input type='checkbox' name='rainDelay' ");
-  html += (rainDelayEnabled ? "checked" : ""); html += F("></div>");
-  html += F("<div class='row switchline'><label>Wind Delay</label><input type='checkbox' name='windCancelEnabled' ");
-  html += (windDelayEnabled ? "checked" : ""); html += F("></div>");
-  html += F("<div class='row switchline'><label>System Pause</label><input type='checkbox' name='pauseEnable' ");
-  html += (systemPaused ? "checked" : ""); html += F("><small>Enable System Pause</small></div>");
-  html += F("<div class='row' style='gap:8px;flex-wrap:wrap'>");
-  html += F("<button class='btn' type='button' id='btn-pause-24'>Pause 24h</button>");
-  html += F("<button class='btn' type='button' id='btn-pause-7d'>Pause 7d</button>");
-  html += F("<button class='btn' type='button' id='btn-resume'>Unpause</button>");
-  html += F("<div class='row'><label>Pause for (hours)</label><input class='in-sm' type='number' min='0' max='720' name='pauseHours' value='");
-  time_t nowEp = time(nullptr);
-    {
-    uint32_t remain = (pauseUntilEpoch > nowEp && systemPaused) ? (pauseUntilEpoch - nowEp) : 0;
-    html += String(remain/3600);
-  }
-  html += F("'></div>");
-  html += F("</div>");
-  // LCD Brightness moved to SPI (TFT) card
-  html += F("</div>");
-
-    // Physical rain & forecast
-  html += F("<div class='card narrow'><h3>Rain Sources</h3>");
-  html += F("<div class='row switchline'><label>Disable Open-Meteo Rain</label><input type='checkbox' name='rainForecastDisabled' ");
-  html += (!rainDelayFromForecastEnabled ? "checked" : ""); html += F("><small>Checked = ignore Open-Meteo rain</small></div>");
-  html += F("<div class='row switchline'><label>Enable Rain Sensor</label><input type='checkbox' name='rainSensorEnabled' "); html += (rainSensorEnabled?"checked":""); html += F("></div>");
-  html += F("<div class='row'><label>Rain Sensor GPIO</label><input class='in-xs' type='number' min='0' max='39' name='rainSensorPin' value='"); html += String(rainSensorPin); html += F("'><small>e.g. 27</small></div>");
-  html += F("<div class='row switchline'><label>Invert Sensor</label><input type='checkbox' name='rainSensorInvert' "); html += (rainSensorInvert?"checked":""); html += F("><small>Use if board is NO</small></div>");
-  html += F("</div>");
-  html += F("</div>");
-
-  // Right column: numeric thresholds / timers
-  html += F("<div>");
-  html += F("<div class='subhead'>Thresholds & Timers</div><hr class='hr'>");
-  html += F("<div class='row'><label>Wind Threshold (m/s)</label><input class='in-sm' type='number' step='0.1' min='0' max='50' name='windSpeedThreshold' value='");
-  html += String(windSpeedThreshold,1); html += F("'></div>");
-  html += F("<div class='row'><label>Rain Cooldown (hours)</label><input class='in-sm' type='number' min='0' max='720' name='rainCooldownHours' value='");
-  html += String(rainCooldownMin / 60);
-  html += F("'><small>Cooldown period after rain stops</small></div>");
-  html += F("<div class='row'><label>Rain Threshold 24h (mm)</label><input class='in-sm' type='number' min='0' max='200' name='rainThreshold24h' value='");
-  html += String(rainThreshold24h_mm);
-  html += F("'><small>Delay if >= threshold (24h total)</small></div>");
-  html += F("</div>");
-
-  html += F("</div>"); // end cols2
-  html += F("</div>"); // end Delays card
 
   // GPIO fallback pins
   html += F("<div class='card narrow'><details class='collapse' ");
